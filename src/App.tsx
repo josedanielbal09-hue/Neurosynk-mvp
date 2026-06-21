@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 declare global {
@@ -121,6 +121,29 @@ export default function App() {
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [mascotExpression, setMascotExpression] = useState<'normal' | 'blink' | 'happy'>('normal');
   const [proposedChange, setProposedChange] = useState<{ proposedTask: string; proposedSteps: string[] } | null>(null);
+
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>('none');
+
+  useEffect(() => {
+    const checkApiStatus = async () => {
+      try {
+        const response = await fetch('/api/api-status');
+        const data = await response.json();
+        if (localStorage.getItem('gemini_api_key')) {
+          setApiStatus('browser');
+        } else if (data.hasServerKey) {
+          setApiStatus('server');
+        } else {
+          setApiStatus('none');
+        }
+      } catch (e) {
+        console.error("Error checking API status:", e);
+      }
+    };
+    checkApiStatus();
+  }, [geminiApiKey]);
 
   useEffect(() => {
     if (!isAppLoading) return;
@@ -249,7 +272,10 @@ export default function App() {
       try {
         const response = await fetch('/api/subdivide-step', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-gemini-api-key': geminiApiKey || ''
+          },
           body: JSON.stringify({
             parentStep: parentStepText,
             taskContext: task,
@@ -353,7 +379,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': geminiApiKey || ''
+        },
         body: JSON.stringify({ messages: payloadMsgs })
       });
       const data = await response.json();
@@ -395,7 +424,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
            const currentMsgs = chatMessages.map(m => ({ role: m.role, content: m.content }));
            const response = await fetch('/api/chat', {
              method: 'POST',
-             headers: { 'Content-Type': 'application/json' },
+             headers: { 
+               'Content-Type': 'application/json',
+               'x-gemini-api-key': geminiApiKey || ''
+             },
              body: JSON.stringify({ messages: [...currentMsgs, sysMsg] })
            });
            const data = await response.json();
@@ -406,7 +438,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
            setIsChatLoading(false);
         }
      };
-  }, [chatMessages, isChatLoading]);
+  }, [chatMessages, isChatLoading, geminiApiKey]);
 
   const isSystemBooted = useRef(false);
 
@@ -435,7 +467,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         
         const response = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'x-gemini-api-key': geminiApiKey || ''
+            },
             body: JSON.stringify({ messages: [sysMsg, ...currentMsgs, { role: 'user', content: userMsg }] })
         });
         const data = await response.json();
@@ -454,7 +489,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     try {
       const response = await fetch('/api/split-task', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': geminiApiKey || ''
+        },
         body: JSON.stringify({ task, context: contextStr }),
       });
       const data = await response.json();
@@ -1024,6 +1062,106 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     return `${mins}:${s}`;
   };
 
+  const renderGlobalSettings = () => {
+    return (
+      <>
+        {/* GLOBAL HEADER CONTROLS (Settings & Status) */}
+        <div className="fixed top-4 right-4 z-[90] flex items-center gap-3 bg-zinc-900/80 backdrop-blur-md border border-zinc-800 p-2.5 rounded-2xl shadow-2xl select-none">
+          <div className="flex items-center gap-2 px-2.5">
+            <div className={`w-2 h-2 rounded-full ${
+              apiStatus === 'browser' ? 'bg-green-500 animate-pulse' :
+              apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
+            }`} />
+            <span className="font-mono text-[9px] tracking-wider text-zinc-400 uppercase font-semibold">
+              {apiStatus === 'browser' ? 'Enlace: Local' :
+               apiStatus === 'server' ? 'Enlace: Servidor' : 'Enlace: Offline'}
+            </span>
+          </div>
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-2 hover:bg-zinc-800 hover:text-green-400 text-zinc-400 rounded-xl transition-all cursor-pointer"
+            title="Configuración de Enlace Neuronal (API Key)"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* SETTINGS MODAL */}
+        <AnimatePresence>
+          {isSettingsOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl max-w-sm w-full shadow-2xl flex flex-col gap-5"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/20">
+                    <Settings className="text-green-500 w-5 h-5" />
+                  </div>
+                  <div className="flex flex-col">
+                    <h3 className="text-white font-medium text-base tracking-tight">Ajustes de Enlace</h3>
+                    <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider">Gemini API Connection</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                  <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Gemini API Key:</label>
+                  <input
+                    type="password"
+                    placeholder="AIzaSy..."
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-green-500 text-white placeholder-zinc-700 font-mono text-xs shadow-inner"
+                  />
+                  <p className="text-[10px] text-zinc-500 leading-normal font-sans">
+                    Obtén tu clave gratuita en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>. Se guardará de forma local en tu navegador.
+                  </p>
+                </div>
+
+                <div className="flex gap-2 border-t border-zinc-800/80 pt-4">
+                  <button
+                    onClick={() => {
+                      localStorage.setItem('gemini_api_key', geminiApiKey);
+                      setIsSettingsOpen(false);
+                    }}
+                    className="flex-1 py-2.5 bg-green-500 hover:bg-green-400 text-black font-bold text-xs rounded-xl transition-colors uppercase tracking-wider"
+                  >
+                    Guardar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGeminiApiKey('');
+                      localStorage.removeItem('gemini_api_key');
+                    }}
+                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded-xl transition-colors"
+                  >
+                    Limpiar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setGeminiApiKey(localStorage.getItem('gemini_api_key') || '');
+                      setIsSettingsOpen(false);
+                    }}
+                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-xl transition-colors"
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </>
+    );
+  };
+
   if (appStage === 'LOGIN') {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center font-sans tracking-tight">
@@ -1155,6 +1293,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
             </p>
           </form>
         </motion.div>
+        {renderGlobalSettings()}
       </div>
     );
   }
@@ -1211,6 +1350,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
             )}
           </button>
         </motion.div>
+        {renderGlobalSettings()}
       </div>
     );
   }
@@ -1524,6 +1664,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
             )}
         </div>
       </div>
+      {renderGlobalSettings()}
     </div>
   );
 }

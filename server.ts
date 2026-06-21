@@ -7,11 +7,11 @@ import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 app.use(express.json());
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-// Initialize Gemini API Client
-const geminiApiKey = process.env.GEMINI_API_KEY;
-const ai = geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null;
+// En el backend, usaremos la instanciación dinámica por cada petición.
+// Pero conservamos esto para verificar si el servidor local tiene la clave en .env.local
+const serverApiKey = process.env.GEMINI_API_KEY;
 
 app.post("/api/split-task", async (req, res) => {
   const { task, context } = req.body;
@@ -20,8 +20,9 @@ app.post("/api/split-task", async (req, res) => {
     return;
   }
 
-  if (!ai) {
-    console.warn("⚠️ GEMINI_API_KEY no configurada. Activando modo offline.");
+  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
+  if (!apiKey) {
+    console.warn("⚠️ GEMINI_API_KEY no configurada en el cliente ni en el servidor. Modo offline.");
     const tarea_corta = task.length > 20 ? task.substring(0, 20) + "..." : task;
     res.json({
       steps: [
@@ -33,6 +34,8 @@ app.post("/api/split-task", async (req, res) => {
     });
     return;
   }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const prompt_sistema = `Eres el Mentor NeuroSynk. 
@@ -99,8 +102,9 @@ app.post("/api/subdivide-step", async (req, res) => {
     return;
   }
 
-  if (!ai) {
-    console.warn("⚠️ GEMINI_API_KEY no configurada. Activando modo offline.");
+  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
+  if (!apiKey) {
+    console.warn("⚠️ GEMINI_API_KEY no configurada en el cliente ni en el servidor. Modo offline.");
     res.json({
       subSteps: [
         `Paso ${stepNumber}.1: Analizar detalles sencillos del paso '${parentStep}'`,
@@ -110,6 +114,8 @@ app.post("/api/subdivide-step", async (req, res) => {
     });
     return;
   }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const prompt_sistema = `Eres el Mentor NeuroSynk.
@@ -168,10 +174,13 @@ No uses ningún formato markdown.`;
 app.post("/api/chat", async (req, res) => {
   const { messages } = req.body;
   
-  if (!ai) {
-    res.json({ reply: "⚠️ Sistema offline o sin llave API. Mantén el foco, volveré pronto. ( ◡‿◡ )" });
+  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
+  if (!apiKey) {
+    res.json({ reply: "⚠️ Sistema offline o sin enlace neuronal. Por favor, configura tu API Key de Gemini en los ajustes (icono de engranaje ⚙️) para habilitar al Mentor IA. ( ◡‿◡ )" });
     return;
   }
+
+  const ai = new GoogleGenAI({ apiKey });
 
   try {
     const systemPrompt = `Eres el Mentor de Neuro-Productividad "Deep Tech".
@@ -306,6 +315,10 @@ Regla 6: INTENCIÓN DE CAMBIO DE TEMA: Si el usuario indica explícitamente que 
     console.error("Gemini Chat Error:", error?.message || error);
     res.json({ reply: "⚠️ Error de conexion neuronal. Manten tu atencion en la tarea principal." });
   }
+});
+
+app.get("/api/api-status", (req, res) => {
+  res.json({ hasServerKey: !!process.env.GEMINI_API_KEY });
 });
 
 async function startServer() {
