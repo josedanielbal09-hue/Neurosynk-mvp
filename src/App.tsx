@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings, Volume2, VolumeX, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Avatar, FocusBudState } from './components/Avatar';
+import { AvatarMessage } from './components/avatar/AvatarMessage';
+import { AVATAR_CONFIG, getRandomStateMessage, FocusState } from './config/avatarConfig';
+import { audioService } from './services/audioService';
 
 declare global {
   interface Window {
@@ -106,6 +110,62 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const holisticRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
+
+  // FocusBud Avatar State Engine & Calibration
+  const [avatarState, setAvatarState] = useState<FocusBudState>('ENFOQUE');
+  const [isRecalibrating, setIsRecalibrating] = useState(false);
+  const lastAvatarStateRef = useRef<{ state: FocusBudState; time: number }>({
+    state: 'ENFOQUE',
+    time: Date.now(),
+  });
+  const celebrationUntilRef = useRef<number>(0);
+
+  // Alertas Multimodales (Texto + Audio)
+  const [currentMessage, setCurrentMessage] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState<boolean>(() => audioService.isMuted());
+  const messageTimeoutRef = useRef<number | null>(null);
+  const celebrationTimeoutRef = useRef<number | null>(null);
+
+  const triggerStateAlert = (newState: FocusState) => {
+    setAvatarState(newState);
+    const frase = getRandomStateMessage(newState);
+    if (frase) {
+      setCurrentMessage(frase);
+      if (messageTimeoutRef.current) {
+        clearTimeout(messageTimeoutRef.current);
+      }
+      messageTimeoutRef.current = window.setTimeout(() => {
+        setCurrentMessage(null);
+        messageTimeoutRef.current = null;
+      }, 3500);
+    }
+    audioService.playStateSound(newState);
+  };
+
+  const handleRecalibrate = () => {
+    setIsRecalibrating(true);
+    metricsRef.current.blinks = [];
+    metricsRef.current.is_blinking = false;
+    metricsRef.current.gaze_history = [];
+    metricsRef.current.distraction_start = null;
+    metricsRef.current.stress_frames = 0;
+    metricsRef.current.nivel_clap = 100.0;
+    metricsRef.current.nivel_carga = 0.0;
+
+    lastAvatarStateRef.current = { state: 'ENFOQUE', time: Date.now() };
+    setAvatarState('ENFOQUE');
+
+    if (focusRef.current) focusRef.current.style.width = '100%';
+    if (fatigueRef.current) fatigueRef.current.style.width = '0%';
+    if (statusRef.current) {
+      statusRef.current.textContent = 'BIOMETRÍA Y CÁMARA RECALIBRADAS 🎯';
+      statusRef.current.className = 'px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 bg-emerald-500/20 text-emerald-400 border-emerald-500/40 uppercase shadow-2xl backdrop-blur-md z-20';
+    }
+
+    setTimeout(() => {
+      setIsRecalibrating(false);
+    }, 1000);
+  };
 
   // HUD Stat Refs and variables
   const focusRef = useRef<HTMLDivElement>(null);
@@ -431,6 +491,32 @@ export default function App() {
         metrics.nivel_carga = isStressed ? Math.min(100, metrics.nivel_carga + 2) : 
                                (isDistracted ? Math.min(100, metrics.nivel_carga + 0.5) : Math.max(0, metrics.nivel_carga - 0.5));
 
+        // --- CÁLCULO DE ESTADO DEL AVATAR FOCUSBUD ---
+        let proposedAvatarState: FocusBudState = 'ENFOQUE';
+
+        if (distDuration > 3.0) {
+            proposedAvatarState = 'ALERTA_SUAVE';
+        } else if (blinkFreq > 25 || metrics.nivel_carga > 70 || EAR < 0.15) {
+            proposedAvatarState = 'FATIGA';
+        } else if (isStressed && variance < 0.00001 && metrics.nivel_carga > 85) {
+            proposedAvatarState = 'PARALISIS';
+        } else {
+            proposedAvatarState = 'ENFOQUE';
+        }
+
+        // Throttling / Histeresis de 500ms para actualizaciones de estado en React
+        const currentTime = Date.now();
+        if (Date.now() < celebrationUntilRef.current) {
+            // Mantener estado CELEBRACION durante la ventana de recompensa
+        } else if (proposedAvatarState !== lastAvatarStateRef.current.state) {
+            if (currentTime - lastAvatarStateRef.current.time > 500) {
+                lastAvatarStateRef.current = { state: proposedAvatarState, time: currentTime };
+                triggerStateAlert(proposedAvatarState);
+            }
+        } else {
+            lastAvatarStateRef.current.time = currentTime;
+        }
+
         // --- RENDERIZADO VISUAL "JUICE" & AUTO-CHAT ---
         if (isStressed) {
             statusMsg = "⚠️ ESTRÉS COGNITIVO DETECTADO (CEÑO)";
@@ -466,7 +552,7 @@ export default function App() {
     }
     if (statusRef.current) {
         statusRef.current.textContent = statusMsg;
-        statusRef.current.className = `px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 ${statusBg} ${statusColor} ${statusBorder} uppercase shadow-2xl backdrop-blur-md`;
+        statusRef.current.className = `px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 ${statusBg} ${statusColor} ${statusBorder} uppercase shadow-2xl backdrop-blur-md z-20`;
     }
   };
 
@@ -580,26 +666,61 @@ export default function App() {
 
         {/* WORKSPACE: Camera & Quick Chat */}
         <div className="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
-            {/* Camera Viewport */}
-            <div className="relative rounded-3xl overflow-hidden bg-zinc-950 flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-0">
-                {/* Hidden native video element for media pipe */}
-                <video ref={videoRef} className="absolute w-0 h-0 opacity-0 -z-10" autoPlay playsInline muted />
-                
-                {/* The visible Canvas with overlay */}
-                <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full object-contain" />
+            {/* Viewport Panorámico FocusBud (Stealth MediaPipe Overlay) */}
+            <div className="relative rounded-3xl overflow-hidden bg-black flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-[380px] z-[60]">
+                {/* Oculto: video nativo y canvas MediaPipe (100% privacidad local en memoria) */}
+                <video ref={videoRef} className="absolute w-0 h-0 opacity-0 pointer-events-none -z-10" autoPlay playsInline muted />
+                <canvas ref={canvasRef} width={1280} height={720} className="absolute w-0 h-0 opacity-0 pointer-events-none -z-10" />
 
-                <div ref={statusRef} className="absolute top-4 left-4 px-4 py-2 rounded-md border font-mono text-xs tracking-wider bg-zinc-800/80 text-zinc-400 border-zinc-700 uppercase backdrop-blur-md shadow-2xl">
+                {/* Top Right: Mute / Unmute Audio Toggle Button */}
+                <div className="absolute top-4 right-4 z-30 pointer-events-auto flex items-center gap-2">
+                    <button
+                        onClick={() => {
+                            const muted = audioService.toggleMute();
+                            setIsMuted(muted);
+                        }}
+                        className="p-2.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 backdrop-blur-md text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500 transition-all shadow-xl cursor-pointer pointer-events-auto flex items-center justify-center"
+                        title={isMuted ? "Activar audio" : "Silenciar audio"}
+                        aria-label={isMuted ? "Activar audio" : "Silenciar audio"}
+                    >
+                        {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
+                    </button>
+                </div>
+
+                {/* 1. Bocadillo de Texto Flotante (Arriba de FocusBud) */}
+                <div className="absolute top-6 z-20 pointer-events-none">
+                    <AvatarMessage message={currentMessage} />
+                </div>
+
+                {/* 2. Robot Avatar FocusBud (Centrado) */}
+                <div className="w-full h-full flex items-center justify-center">
+                    <Avatar state={avatarState} />
+                </div>
+
+                <div ref={statusRef} className="absolute top-4 left-4 px-4 py-2 rounded-md border font-mono text-xs tracking-wider bg-zinc-800/80 text-zinc-400 border-zinc-700 uppercase backdrop-blur-md shadow-2xl z-20">
                     INICIANDO SENSORES VIA MEDIAPIPE...
                 </div>
 
-                <div className="absolute bottom-4 left-4 flex gap-2">
-                    <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl">
-                       <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-red-500 animate-pulse'}`}/> {isPaused ? 'EN PAUSA' : 'CAPTURA ACTIVA'}
+                <div className="absolute bottom-4 left-4 flex gap-2 z-20">
+                    <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl border border-zinc-800">
+                       <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-green-500 animate-pulse'}`}/> {isPaused ? 'EN PAUSA' : 'EDGE BIOMETRICS ACTIVA (LOCAL)'}
                     </span>
                 </div>
 
+                <div className="absolute bottom-4 right-4 flex gap-2 z-20">
+                    <button
+                        onClick={handleRecalibrate}
+                        disabled={isRecalibrating}
+                        className="px-3 py-1.5 rounded-md bg-zinc-900/80 hover:bg-zinc-800 backdrop-blur-md font-mono text-[10px] text-zinc-300 flex items-center gap-1.5 shadow-2xl border border-zinc-700 hover:border-zinc-500 transition-all group disabled:opacity-50"
+                        title="Recalibrar cámara y métricas biométricas"
+                    >
+                        <RotateCcw className={`w-3.5 h-3.5 text-emerald-400 ${isRecalibrating ? 'animate-spin' : 'group-hover:rotate-[-45deg] transition-transform'}`} />
+                        <span>{isRecalibrating ? 'RECALIBRANDO...' : 'RECALIBRAR'}</span>
+                    </button>
+                </div>
+
                 {isPaused && (
-                     <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-20 flex items-center justify-center pointer-events-none">
+                     <div className="absolute inset-0 bg-black/70 backdrop-blur-[4px] z-30 flex items-center justify-center pointer-events-none">
                          <span className="text-3xl font-black tracking-[0.3em] text-blue-400 font-mono drop-shadow-[0_0_20px_rgba(59,130,246,0.8)]">PAUSADO</span>
                      </div>
                 )}
@@ -704,75 +825,79 @@ export default function App() {
                 </div>
             </div>
 
-            <div className="p-6 flex-1 overflow-y-auto no-scrollbar">
-                <div className="space-y-4">
-                    {steps.map((step, i) => {
-                        const isCompleted = i < currentStepIdx;
-                        const isCurrent = i === currentStepIdx;
-                        
-                        return (
-                            <motion.div 
-                                key={i}
-                                layout
-                                initial={{ opacity: 0, x: 20 }}
-                                animate={isCurrent ? { 
-                                    opacity: 1, 
-                                    x: 0, 
-                                    boxShadow: ["0px 0px 0px rgba(52,211,153,0)", "0px 0px 25px rgba(52,211,153,0.3)", "0px 0px 15px rgba(52,211,153,0.1)"],
-                                    backgroundColor: ["rgba(24,24,27,1)", "rgba(16,185,129,0.1)", "rgba(34,197,94,0.1)"]
-                                } : { 
-                                    opacity: 1, 
-                                    x: 0,
-                                    boxShadow: "0px 0px 0px rgba(52,211,153,0)",
-                                    backgroundColor: isCompleted ? "rgba(24,24,27,1)" : "rgba(24,24,27,0.5)"
-                                }}
-                                transition={{ 
-                                    delay: i * 0.1, 
-                                    boxShadow: { duration: 1.5, ease: "easeOut" },
-                                    backgroundColor: { duration: 1.5, ease: "easeOut" }
-                                }}
-                                className={`p-5 rounded-2xl flex items-start gap-4 transition-all duration-300 ${
-                                    isCurrent 
-                                        ? 'ring-1 ring-green-500/20' 
-                                        : isCompleted
-                                            ? 'opacity-40 border border-zinc-900/50'
-                                            : 'opacity-80 border border-zinc-800'
-                                }`}
-                            >
-                                <motion.div 
-                                    className="mt-0.5 min-w-6 origin-center"
-                                    animate={isCurrent ? { scale: [1, 1.3, 1] } : {}}
-                                    transition={{ duration: 0.6, repeat: isCurrent ? Infinity : 0, repeatDelay: 1.5 }}
-                                >
-                                    {isCompleted ? (
-                                        <CheckCircle className="w-6 h-6 text-zinc-600" />
-                                    ) : isCurrent ? (
-                                        <ArrowRight className="w-6 h-6 text-green-500" />
-                                    ) : (
-                                        <div className="w-6 h-6 rounded-full border-2 border-zinc-800" />
-                                    )}
-                                </motion.div>
-                                
-                                <span className={`text-base leading-relaxed ${
-                                    isCurrent ? 'text-green-50 font-semibold' : isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-400'
-                                }`}>
-                                    {step}
-                                </span>
-                            </motion.div>
-                        )
-                    })}
+            <div className="p-6 flex-1 overflow-y-auto no-scrollbar flex flex-col justify-between">
+                {currentStepIdx < steps.length ? (
+                    <>
+                        <div className="space-y-6">
+                            {/* Subtle Session Progress Bar */}
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center text-xs font-mono text-zinc-400">
+                                    <span className="font-semibold text-green-400">Paso {currentStepIdx + 1} de {steps.length}</span>
+                                    <span>{steps.length > 0 ? Math.min(100, Math.round((currentStepIdx / steps.length) * 100)) : 0}% completado</span>
+                                </div>
+                                <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden">
+                                    <div 
+                                        className="bg-gradient-to-r from-green-500 to-emerald-400 h-full transition-all duration-500 ease-out"
+                                        style={{ width: `${steps.length > 0 ? Math.min(100, Math.round((currentStepIdx / steps.length) * 100)) : 0}%` }}
+                                    />
+                                </div>
+                            </div>
 
-                    {currentStepIdx >= steps.length && steps.length > 0 && (
-                         <motion.div 
-                         initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
-                         animate={{ 
-                             opacity: 1, 
-                             scale: 1, 
-                             rotate: 0,
-                             backgroundColor: ["#ffffff", "#dcfce7", "#ffffff"]
-                         }}
-                         transition={{ duration: 1.5, ease: "easeOut" }}
-                         className="p-6 mt-8 rounded-2xl bg-white text-black text-center flex flex-col items-center gap-3 shadow-[0_0_40px_rgba(34,197,94,0.2)] relative overflow-hidden"
+                            {/* Active Step Card */}
+                            <AnimatePresence mode="wait">
+                                <motion.div 
+                                    key={currentStepIdx}
+                                    initial={{ opacity: 0, y: 15 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0, y: -15 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="p-6 rounded-3xl bg-zinc-900/90 border border-green-500/30 shadow-[0_0_30px_rgba(34,197,94,0.1)] space-y-4"
+                                >
+                                    <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest text-green-400">
+                                        <ArrowRight className="w-4 h-4 text-green-400 animate-pulse" />
+                                        <span>Paso Activo</span>
+                                    </div>
+                                    <h3 className="text-xl sm:text-2xl font-bold text-zinc-100 leading-relaxed tracking-tight">
+                                        {steps[currentStepIdx]}
+                                    </h3>
+                                </motion.div>
+                            </AnimatePresence>
+                        </div>
+
+                        {/* Primary Action Button: YA LO HICE ✅ */}
+                        <div className="pt-6">
+                            <button 
+                                onClick={handleNextStep}
+                                className="w-full py-5 bg-green-500 hover:bg-green-400 text-black font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.25)] active:scale-[0.98]"
+                            >
+                                {isShowingReward ? (
+                                    <span className="text-xl animate-bounce">{rewardKaomoji || "¡VAMOS!"}</span>
+                                ) : (
+                                    <span>YA LO HICE ✅</span>
+                                )}
+                                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+                            </button>
+                            <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-4">
+                                Pulsa para avanzar y liberar dopamina
+                            </p>
+                        </div>
+                    </>
+                ) : (
+                    <div className="my-auto">
+                        <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden mb-6">
+                            <div className="bg-green-500 h-full w-full" />
+                        </div>
+
+                        <motion.div 
+                            initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
+                            animate={{ 
+                                opacity: 1, 
+                                scale: 1, 
+                                rotate: 0,
+                                backgroundColor: ["#ffffff", "#dcfce7", "#ffffff"]
+                            }}
+                            transition={{ duration: 1.5, ease: "easeOut" }}
+                            className="p-6 rounded-2xl bg-white text-black text-center flex flex-col items-center gap-3 shadow-[0_0_40px_rgba(34,197,94,0.2)] relative overflow-hidden"
                         >
                             <div className="absolute inset-0 bg-green-500/5 pointer-events-none" />
                             <Target className="w-16 h-16 text-green-500 mb-2 animate-bounce" />
@@ -787,24 +912,9 @@ export default function App() {
                                 Iniciar Nueva Misión
                             </button>
                         </motion.div>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
-
-            {currentStepIdx < steps.length && (
-                <div className="p-6 bg-zinc-900 border-t border-zinc-800/50 z-10 relative">
-                    <button 
-                        onClick={handleNextStep}
-                        className="w-full py-5 bg-green-500 hover:bg-green-400 text-black font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.2)]"
-                    >
-                        {isShowingReward ? "¡VAMOS!" : "COMPLETAR PASO"}
-                        <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
-                    </button>
-                    <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-4">
-                       Pulsa para recuperar dopamina
-                    </p>
-                </div>
-            )}
         </div>
       </div>
     </div>
