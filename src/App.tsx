@@ -25,6 +25,12 @@ declare global {
 }
 
 export default function App() {
+  type ScreenState = 'MODE_SELECTION' | 'WORKSPACE';
+  type WorkMode = 'DEEP_WORK' | 'ANTI_PARALYSIS' | 'BODY_DOUBLING';
+
+  const [currentScreen, setCurrentScreen] = useState<ScreenState>('MODE_SELECTION');
+  const [workMode, setWorkMode] = useState<WorkMode>('DEEP_WORK');
+
   const [task, setTask] = useState('');
   const [steps, setSteps] = useState<string[]>([]);
   const [isStarted, setIsStarted] = useState(false);
@@ -212,17 +218,19 @@ export default function App() {
 
   const isSystemBooted = useRef(false);
 
-  const handleStart = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleStart = async (e?: React.FormEvent, modeChoice?: WorkMode) => {
+    if (e) e.preventDefault();
     const finalTask = task.trim() ? task : 'Estudiar material general';
     setTask(finalTask);
+    const activeMode = modeChoice || workMode;
+    setWorkMode(activeMode);
     setIsLoading(true);
 
     try {
       const response = await fetch('/api/split-task', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: finalTask }),
+        body: JSON.stringify({ task: finalTask, mode: activeMode }),
       });
       const data = await response.json();
       if (data.steps) {
@@ -233,6 +241,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
       setIsStarted(true);
+      setCurrentScreen('WORKSPACE');
     }
   };
 
@@ -578,52 +587,126 @@ export default function App() {
     return `${mins}:${s}`;
   };
 
-  if (!isStarted) {
+  if (currentScreen === 'MODE_SELECTION' || !isStarted) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center font-sans tracking-tight">
+      <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center font-sans tracking-tight p-4">
         <motion.div 
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="max-w-md w-full p-8 rounded-3xl bg-zinc-900 shadow-2xl"
+          className="max-w-xl w-full p-8 rounded-3xl bg-zinc-900 shadow-2xl border border-zinc-800 space-y-6"
         >
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/20">
-              <BrainCircuit className="text-green-500 w-5 h-5" />
+          <div className="flex items-center justify-between border-b border-zinc-800/80 pb-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center border border-green-500/20">
+                <BrainCircuit className="text-green-500 w-5 h-5" />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-white tracking-tight">NeuroSynk v3.4 Web</h1>
+                <p className="text-xs text-zinc-400 font-mono">Configura tu Sesión de Enfoque</p>
+              </div>
             </div>
-            <h1 className="text-xl font-medium text-white tracking-tight">NeuroSynk v3.4 Web</h1>
+            {isStarted && (
+              <button
+                onClick={() => setCurrentScreen('WORKSPACE')}
+                className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-mono text-zinc-300 transition-colors cursor-pointer"
+              >
+                Volver al Workspace ➔
+              </button>
+            )}
           </div>
-          
-          <form onSubmit={handleStart} className="space-y-6">
+
+          <form onSubmit={(e) => handleStart(e)} className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-zinc-400 mb-2">
-                Ingresa la tarea o proyecto de hoy:
+              <label className="block text-sm font-medium text-zinc-300 mb-2">
+                ¿En qué vas a trabajar hoy?
               </label>
               <input 
                 autoFocus
                 type="text"
-                className="w-full px-4 py-4 bg-zinc-950 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500/50 text-white placeholder-zinc-700 font-mono text-sm shadow-inner"
-                placeholder="Ej. Estudiar material general"
+                className="w-full px-4 py-4 bg-zinc-950 border border-zinc-800 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500/50 text-white placeholder-zinc-600 font-mono text-sm shadow-inner transition-all"
+                placeholder="Ej. Escribir reporte trimestral o estudiar matemáticas..."
                 value={task}
                 onChange={e => setTask(e.target.value)}
                 disabled={isLoading}
               />
             </div>
-            
+
+            <div>
+              <label className="block text-xs font-mono uppercase tracking-wider text-zinc-400 mb-3">
+                Selecciona tu Modo de Trabajo:
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  {
+                    id: 'DEEP_WORK' as WorkMode,
+                    title: '⚡ Deep Work',
+                    badge: 'Flujo',
+                    desc: 'Foco profundo e intervenciones discretas.'
+                  },
+                  {
+                    id: 'ANTI_PARALYSIS' as WorkMode,
+                    title: '🆘 Rescate Anti-Parálisis',
+                    badge: 'Paso a Paso',
+                    desc: 'Micro-pasos mínimos para vencer la sobrecarga.'
+                  },
+                  {
+                    id: 'BODY_DOUBLING' as WorkMode,
+                    title: '🤝 Body Doubling',
+                    badge: 'Estándar',
+                    desc: 'Acompañamiento continuo y calibración activa.'
+                  }
+                ].map(mode => {
+                  const isSelected = workMode === mode.id;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => setWorkMode(mode.id)}
+                      className={`p-4 rounded-2xl border text-left flex flex-col justify-between transition-all cursor-pointer ${
+                        isSelected 
+                          ? 'bg-green-500/10 border-green-500/60 shadow-[0_0_20px_rgba(34,197,94,0.15)] ring-1 ring-green-500/30' 
+                          : 'bg-zinc-950/60 border-zinc-800 hover:border-zinc-700 hover:bg-zinc-950'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-sm font-bold ${isSelected ? 'text-green-400' : 'text-white'}`}>
+                            {mode.title}
+                          </span>
+                        </div>
+                        <p className="text-xs text-zinc-400 leading-relaxed font-sans">
+                          {mode.desc}
+                        </p>
+                      </div>
+                      <div className="mt-3 pt-2 border-t border-zinc-800/40 flex justify-end">
+                        <span className={`text-[10px] font-mono px-2 py-0.5 rounded-md ${
+                          isSelected ? 'bg-green-500/20 text-green-300' : 'bg-zinc-800 text-zinc-500'
+                        }`}>
+                          {mode.badge}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <button 
               type="submit"
               disabled={isLoading}
-              className="w-full py-4 px-4 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              className="w-full py-4 px-4 bg-green-500 hover:bg-green-400 text-black font-extrabold text-base rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 shadow-[0_0_25px_rgba(34,197,94,0.25)] cursor-pointer"
             >
               {isLoading ? (
                 <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <Play className="w-4 h-4 fill-black" /> Iniciar Sesión de Foco
+                  <Play className="w-5 h-5 fill-black" /> Iniciar Sesión ({workMode === 'DEEP_WORK' ? 'Deep Work' : workMode === 'ANTI_PARALYSIS' ? 'Rescate' : 'Body Doubling'})
                 </>
               )}
             </button>
-            <p className="text-xs text-center text-zinc-500 font-mono">
-              Requiere acceso a la cámara. Procesamiento biometría 100% local.
+            
+            <p className="text-[11px] text-center text-zinc-500 font-mono">
+              🔒 Biometría 100% local en memoria navegador (MediaPipe CDN).
             </p>
           </form>
         </motion.div>
@@ -801,22 +884,30 @@ export default function App() {
                   </h2>
                   <p className="text-sm font-mono text-zinc-500 truncate mt-1">OBJ: {task}</p>
                 </div>
-                {/* Timer & Pause Controls */}
-                <div className="flex gap-2">
+                {/* Mode Switch, Timer & Pause Controls */}
+                <div className="flex gap-2 items-center">
+                    <button
+                        onClick={() => setCurrentScreen('MODE_SELECTION')}
+                        className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-mono transition-colors shadow-lg cursor-pointer"
+                        title="⚙️ Cambiar Modo de Trabajo"
+                    >
+                        <Settings className="w-4 h-4 text-green-400" />
+                        <span className="hidden sm:inline">Modo</span>
+                    </button>
                     <button 
                         onClick={() => setIsPaused(!isPaused)}
-                        className={`flex items-center justify-center w-12 rounded-xl shadow-lg border transition-colors ${
+                        className={`flex items-center justify-center w-10 h-10 rounded-xl shadow-lg border transition-colors ${
                             isPaused ? 'bg-blue-500 border-blue-400 text-black' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700 text-zinc-300'
                         }`}
                         title="Pausar / Reanudar (Tecla Q)"
                     >
-                        {isPaused ? <Play className="w-5 h-5 fill-current"/> : <Pause className="w-5 h-5 fill-current"/>}
+                        {isPaused ? <Play className="w-4 h-4 fill-current"/> : <Pause className="w-4 h-4 fill-current"/>}
                     </button>
-                    <div className={`flex items-center gap-2 px-4 py-2 bg-black border rounded-xl transition-all ${
+                    <div className={`flex items-center gap-2 px-3 py-2 bg-black border rounded-xl transition-all ${
                         isPaused ? 'border-zinc-800 opacity-50' : 'border-green-500/40 shadow-[0_0_20px_rgba(34,197,94,0.15)]'
                     }`}>
-                       <Timer className={`w-5 h-5 ${isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse'}`} />
-                       <span className={`font-mono text-xl tracking-[0.15em] font-bold ${
+                       <Timer className={`w-4 h-4 ${isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse'}`} />
+                       <span className={`font-mono text-lg tracking-[0.15em] font-bold ${
                            isPaused ? 'text-zinc-600' : 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]'
                        }`}>
                            {formatTime(elapsedTime)}
