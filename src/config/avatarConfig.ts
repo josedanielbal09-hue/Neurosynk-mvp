@@ -15,92 +15,97 @@ export interface StateAvatarConfig {
 export const AVATAR_CONFIG: Record<FocusState, StateAvatarConfig> = {
   ENFOQUE: {
     messages: [
-      "¡Estás en la zona!",
-      "¡Excelente ritmo!",
-      "Gran concentración, sigue",
-      "¡Qué gran flujo!",
+      "Estamos avanzando juntos a buen ritmo.",
+      "Mantenemos el foco en este micro-paso.",
+      "Aquí sigo contigo. Seguimos concentrados.",
+      "Buen ritmo. Un paso a la vez.",
+      "Estamos en la zona. Continuamos.",
     ],
     audioConfig: {
       frequency: 440,
       type: 'sine',
-      duration: 0.15,
+      duration: 0.25,
       cooldown: 60000,
     },
   },
   ALERTA_SUAVE: {
     messages: [
-      "Volvamos al objetivo",
-      "Respiramos y retomamos",
-      "Ajustemos el foco",
-      "Un pasito a la vez",
+      "Volvamos poco a poco al objetivo.",
+      "Sin prisa: retomemos donde nos quedamos.",
+      "Reconectemos con el micro-paso activo.",
+      "Tomemos aire y regresemos al flujo.",
+      "Aquí estamos. Volvamos a la pantalla.",
     ],
     audioConfig: {
-      frequency: 320,
+      frequency: 528,
       type: 'sine',
-      duration: 0.2,
+      duration: 0.3,
       cooldown: 45000,
     },
   },
   FATIGA: {
     messages: [
-      "Toma un sorbo de agua",
-      "Parpadea y estírate",
-      "Descansa la vista 1 min",
-      "Baja los hombros, respira",
+      "Siento el cansancio. Respiremos un momento.",
+      "Parpadear e hidratarse también es avanzar.",
+      "Bajemos la velocidad unos segundos.",
+      "Cuidemos la energía. Vamos a nuestro ritmo.",
+      "Tomemos un respiro rápido para recuperar.",
     ],
     audioConfig: {
-      frequency: 280,
+      frequency: 330,
       type: 'triangle',
-      duration: 0.3,
+      duration: 0.5,
       cooldown: 60000,
     },
   },
   PARALISIS: {
     messages: [
-      "Haz solo 1 minuto hoy",
-      "Divide el paso en mini",
-      "Sin presión, empieza ya",
-      "Respiración profunda",
+      "No hay prisa. Solo hagamos el primer clic.",
+      "Simplifiquemos: enfoquémonos en una sola acción.",
+      "Estamos aquí. Avancemos sin presión.",
+      "Rompamos la inercia con un paso mínimo.",
+      "Cero presión. Avanzamos cuando estés listo.",
     ],
     audioConfig: {
-      frequency: 350,
-      type: 'triangle',
-      duration: 0.25,
+      frequency: 261.63,
+      type: 'sine',
+      duration: 0.7,
       cooldown: 45000,
     },
   },
   CELEBRACION: {
     messages: [
-      "¡Lo lograste! 🎯",
-      "¡Increíble trabajo! 🔥",
-      "¡Objetivo cumplido! ⭐",
-      "¡Eres imparable! 🚀",
+      "¡Buen trabajo! Sigamos con el siguiente paso.",
+      "¡Un paso menos! Sentimos ese avance.",
+      "¡Logrado! Estamos avanzando con firmeza.",
+      "¡Muy bien! Seguimos sumando victorias.",
+      "¡Paso completado! Vamos por el que sigue.",
     ],
     audioConfig: {
-      frequency: 528,
+      frequency: 523.25,
       type: 'sine',
-      duration: 0.4,
+      duration: 0.3,
       cooldown: 0,
     },
   },
   PAUSA: {
     messages: [
-      "Pausa merecida ☕",
-      "Desconecta unos minutos",
-      "Carga energías",
-      "Momento de estirarse",
+      "Nos tomamos una pausa bien merecida.",
+      "Desconectemos unos minutos para recargar.",
+      "Momento de estirarnos y descansar la vista.",
+      "Pausa activa: cuidamos nuestra mente.",
     ],
     audioConfig: {
       frequency: 392,
       type: 'sine',
-      duration: 0.2,
+      duration: 0.3,
       cooldown: 30000,
     },
   },
 };
 
 /**
- * Retorna una frase aleatoria en todo de compañero TDAH para el estado actual.
+ * Retorna una frase aleatoria en tono de compañero TDAH (Body Doubling) para el estado actual.
  */
 export const getRandomStateMessage = (state: FocusState): string => {
   const messages = AVATAR_CONFIG[state]?.messages;

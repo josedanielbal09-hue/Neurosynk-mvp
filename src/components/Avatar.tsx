@@ -1,136 +1,183 @@
-import React from 'react';
-import styles from './Avatar.module.css';
+import React, { useState, useEffect } from 'react';
+import { FocusState, getRandomStateMessage } from '../config/avatarConfig';
+import { audioService } from '../services/audioService';
 
 import cuerpoImg from '../assets/cuerpo.png';
 import ojosVerdesImg from '../assets/ojos_verdes.png';
 import ojosAmbarImg from '../assets/ojos_ambar.png';
 import ojosCansadosImg from '../assets/ojos_cansados.png';
 
-import { FocusState } from '../config/avatarConfig';
-
 export type { FocusState };
 export type FocusBudState = FocusState;
 
-interface AvatarProps {
+export interface AvatarProps {
   state: FocusState;
+  message?: string;
   className?: string;
 }
 
-export const Avatar = React.memo<AvatarProps>(({ state, className = '' }) => {
-  const getStateConfig = () => {
-    switch (state) {
+export const Avatar: React.FC<AvatarProps> = React.memo(({ state, message, className = '' }) => {
+  const [isBlinking, setIsBlinking] = useState<boolean>(false);
+  const [currentMessage, setCurrentMessage] = useState<string>('');
+
+  // 1. Selección dinámica de mensaje desde avatarConfig si no se provee por prop manual
+  useEffect(() => {
+    if (message) {
+      setCurrentMessage(message);
+    } else {
+      setCurrentMessage(getRandomStateMessage(state));
+    }
+  }, [state, message]);
+
+  // 2. Emisión de earcon de audio sintetizado según el estado
+  useEffect(() => {
+    audioService.playStateSound(state);
+  }, [state]);
+
+  // 3. Temporizador de Parpadeo Natural Procedural (breves pulsos de 150ms cada 3.5s - 6s)
+  useEffect(() => {
+    let blinkTimer: NodeJS.Timeout;
+    let resetTimer: NodeJS.Timeout;
+
+    const triggerBlinkCycle = () => {
+      const randomInterval = Math.random() * 2500 + 3500;
+      blinkTimer = setTimeout(() => {
+        setIsBlinking(true);
+        resetTimer = setTimeout(() => {
+          setIsBlinking(false);
+          triggerBlinkCycle();
+        }, 150);
+      }, randomInterval);
+    };
+
+    triggerBlinkCycle();
+
+    return () => {
+      clearTimeout(blinkTimer);
+      clearTimeout(resetTimer);
+    };
+  }, []);
+
+  const getActiveEye = (focusState: FocusState): 'verdes' | 'ambar' | 'cansados' => {
+    switch (focusState) {
       case 'ENFOQUE':
-        return {
-          primary: '#22c55e',      // Emerald Green
-          secondary: '#4ade80',    // Soft Green
-          glow: 'rgba(34, 197, 94, 0.45)',
-          badgeBg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
-          label: 'FLUJO OPTIMO (ENFOQUE)',
-          activeEye: 'verdes' as const,
-        };
-      case 'ALERTA_SUAVE':
-        return {
-          primary: '#f59e0b',      // Amber
-          secondary: '#fbbf24',    // Bright Amber
-          glow: 'rgba(245, 158, 11, 0.55)',
-          badgeBg: 'bg-amber-500/10 text-amber-400 border-amber-500/30',
-          label: 'ALERTA: DESVIACION DETECTADA',
-          activeEye: 'ambar' as const,
-        };
-      case 'FATIGA':
-        return {
-          primary: '#818cf8',      // Indigo / Soft Purple
-          secondary: '#a78bfa',    // Soft Violet
-          glow: 'rgba(129, 140, 248, 0.4)',
-          badgeBg: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30',
-          label: 'FATIGA O SOBRECARGA DETECTADA',
-          activeEye: 'cansados' as const,
-        };
-      case 'PARALISIS':
-        return {
-          primary: '#f43f5e',      // Rose / Crimson
-          secondary: '#fb7185',    // Soft Red
-          glow: 'rgba(244, 63, 94, 0.65)',
-          badgeBg: 'bg-rose-500/10 text-rose-400 border-rose-500/30 border-dashed animate-pulse',
-          label: 'BLOQUEO / PARALISIS COGNITIVA',
-          activeEye: 'cansados' as const,
-        };
       case 'CELEBRACION':
-        return {
-          primary: '#06b6d4',      // Cyan / Bright Blue
-          secondary: '#38bdf8',
-          glow: 'rgba(6, 182, 212, 0.65)',
-          badgeBg: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30 font-bold animate-bounce',
-          label: '¡OBJETIVO CUMPLIDO! (CELEBRACION)',
-          activeEye: 'verdes' as const,
-        };
+        return 'verdes';
+      case 'ALERTA_SUAVE':
+        return 'ambar';
+      case 'FATIGA':
+      case 'PARALISIS':
       case 'PAUSA':
-        return {
-          primary: '#64748b',      // Slate / Muted
-          secondary: '#94a3b8',
-          glow: 'rgba(100, 116, 139, 0.3)',
-          badgeBg: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
-          label: 'MODO PAUSA / DESCANSO',
-          activeEye: 'cansados' as const,
-        };
+      default:
+        return 'cansados';
     }
   };
 
-  const config = getStateConfig();
-  const animationClass = styles[`state${state}`] || styles.stateENFOQUE;
+  const getAuraStyles = (focusState: FocusState) => {
+    switch (focusState) {
+      case 'ENFOQUE':
+        return 'bg-emerald-500/30';
+      case 'ALERTA_SUAVE':
+        return 'bg-amber-500/40 animate-pulse';
+      case 'FATIGA':
+        return 'bg-orange-500/30';
+      case 'PARALISIS':
+        return 'bg-purple-600/40';
+      case 'CELEBRACION':
+        return 'bg-green-400/50 animate-bounce';
+      case 'PAUSA':
+      default:
+        return 'bg-slate-500/25';
+    }
+  };
+
+  const activeEye = getActiveEye(state);
+  const auraClass = getAuraStyles(state);
 
   return (
-    <div className={`relative flex flex-col items-center justify-center w-full h-full p-6 select-none ${className}`}>
-      
-      {/* Background Ambient Glow aura */}
-      <div 
-        className="absolute w-72 h-72 rounded-full filter blur-3xl transition-all duration-700 pointer-events-none opacity-30"
-        style={{ backgroundColor: config.primary }}
-      />
+    <div className={`relative flex flex-col items-center justify-center w-full h-full p-4 select-none ${className}`}>
+      {/* Estilos CSS Inline para Animaciones Procedurales */}
+      <style>{`
+        @keyframes floatBreathing {
+          0%, 100% {
+            transform: translateY(-5px);
+          }
+          50% {
+            transform: translateY(5px);
+          }
+        }
+        @keyframes hudFadeIn {
+          from {
+            opacity: 0;
+            transform: translateY(6px) scale(0.96);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        .animate-breathing-float {
+          animation: floatBreathing 4s ease-in-out infinite;
+        }
+        .animate-hud-fadeIn {
+          animation: hudFadeIn 0.3s ease-out forwards;
+        }
+      `}</style>
 
-      {/* Main FocusBud Avatar PNG Layers Container */}
-      <div className={`relative w-64 h-64 sm:w-72 sm:h-72 transition-all duration-500 ${styles.avatarContainer} ${animationClass}`}>
-        
-        {/* Layer 1: Body (Cuerpo PNG) */}
-        <img 
-          src={cuerpoImg} 
+      {/* Globo de Notificación HUD (Speech Bubble Body Doubling) */}
+      {currentMessage && (
+        <div className="relative mb-3 z-30 animate-hud-fadeIn">
+          <div className="bg-slate-900/90 backdrop-blur-md border border-slate-700/70 shadow-2xl rounded-2xl px-4 py-2.5 text-xs sm:text-sm font-medium text-slate-200 text-center max-w-xs sm:max-w-sm tracking-wide">
+            {currentMessage}
+          </div>
+          {/* Apuntador del globo de diálogo */}
+          <div className="absolute left-1/2 -bottom-2 -translate-x-1/2 w-0 h-0 border-x-8 border-x-transparent border-t-8 border-t-slate-900/90" />
+        </div>
+      )}
+
+      {/* Robot Chassis Container (Animación de Flotación Procedural -5px a +5px en ciclo de 4s) */}
+      <div className="relative w-60 h-60 sm:w-72 sm:h-72 animate-breathing-float flex items-center justify-center">
+        {/* Aura Ambient Glow */}
+        <div
+          className={`absolute inset-2 rounded-full filter blur-3xl transition-all duration-700 pointer-events-none opacity-60 ${auraClass}`}
+        />
+
+        {/* Capa 1: Base Cuerpo PNG (Fijo a opacity-100) */}
+        <img
+          src={cuerpoImg}
           alt="FocusBud Cuerpo Base"
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none drop-shadow-[0_10px_25px_rgba(0,0,0,0.8)] z-0 ${styles.layerCuerpo}`}
+          className="absolute inset-0 w-full h-full object-contain pointer-events-none z-0 opacity-100 drop-shadow-[0_10px_25px_rgba(0,0,0,0.7)]"
         />
 
-        {/* Layer 2a: Eyes Verdes Layer */}
-        <img 
-          src={ojosVerdesImg} 
+        {/* Capa 2a: Ojos Verdes (ENFOQUE / CELEBRACION) */}
+        <img
+          src={ojosVerdesImg}
           alt="FocusBud Ojos Verdes"
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-300 ease-in-out z-10 ${styles.layerOjos} ${
-            config.activeEye === 'verdes' ? 'opacity-100' : 'opacity-0'
-          } ${state === 'ENFOQUE' || state === 'CELEBRACION' ? styles.proceduralBlink : ''}`}
-        />
-
-        {/* Layer 2b: Eyes Ambar Layer */}
-        <img 
-          src={ojosAmbarImg} 
-          alt="FocusBud Ojos Ambar"
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-300 ease-in-out z-10 ${styles.layerOjos} ${
-            config.activeEye === 'ambar' ? 'opacity-100' : 'opacity-0'
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none z-10 transition-opacity duration-500 ease-in-out ${
+            activeEye === 'verdes' && !isBlinking ? 'opacity-100' : 'opacity-0'
           }`}
         />
 
-        {/* Layer 2c: Eyes Cansados Layer */}
-        <img 
-          src={ojosCansadosImg} 
+        {/* Capa 2b: Ojos Ámbar (ALERTA_SUAVE) */}
+        <img
+          src={ojosAmbarImg}
+          alt="FocusBud Ojos Ámbar"
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none z-10 transition-opacity duration-500 ease-in-out ${
+            activeEye === 'ambar' && !isBlinking ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+
+        {/* Capa 2c: Ojos Cansados (FATIGA / PARALISIS / PAUSA) */}
+        <img
+          src={ojosCansadosImg}
           alt="FocusBud Ojos Cansados"
-          className={`absolute inset-0 w-full h-full object-contain pointer-events-none transition-opacity duration-300 ease-in-out z-10 ${styles.layerOjos} ${
-            config.activeEye === 'cansados' ? 'opacity-100' : 'opacity-0'
+          className={`absolute inset-0 w-full h-full object-contain pointer-events-none z-10 transition-opacity duration-500 ease-in-out ${
+            activeEye === 'cansados' && !isBlinking ? 'opacity-100' : 'opacity-0'
           }`}
         />
-
-      </div>
-
-      {/* FocusBud State Badge */}
-      <div className={`mt-4 px-4 py-1.5 rounded-full border font-mono text-xs tracking-wider uppercase backdrop-blur-md shadow-lg transition-all duration-300 z-20 ${config.badgeBg}`}>
-        {config.label}
       </div>
     </div>
   );
 });
+
+Avatar.displayName = 'Avatar';
