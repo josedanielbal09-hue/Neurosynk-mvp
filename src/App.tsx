@@ -31,6 +31,16 @@ export default function App() {
   const [currentScreen, setCurrentScreen] = useState<ScreenState>('MODE_SELECTION');
   const [workMode, setWorkMode] = useState<WorkMode>('DEEP_WORK');
 
+  // Telemetría Biométrica en Vivo
+  const [faceDetected, setFaceDetected] = useState<boolean>(false);
+  const [biometricError, setBiometricError] = useState<string | null>(null);
+  const [fps, setFps] = useState<number>(0);
+  const [landmarksCount, setLandmarksCount] = useState<number>(0);
+  const [currentScore, setCurrentScore] = useState<number>(100);
+
+  const frameTimesRef = useRef<number[]>([]);
+  const lastTelemetryUpdateRef = useRef<number>(0);
+
   const [task, setTask] = useState('');
   const [steps, setSteps] = useState<string[]>([]);
   const [isStarted, setIsStarted] = useState(false);
@@ -125,6 +135,8 @@ export default function App() {
     time: Date.now(),
   });
   const celebrationUntilRef = useRef<number>(0);
+  const baselineRef = useRef<{ yaw: number; pitch: number; browDist: number } | null>(null);
+  const shouldCaptureBaselineRef = useRef<boolean>(false);
 
   // Alertas Multimodales (Texto + Audio)
   const [currentMessage, setCurrentMessage] = useState<string | null>(null);
@@ -150,6 +162,8 @@ export default function App() {
 
   const handleRecalibrate = () => {
     setIsRecalibrating(true);
+    baselineRef.current = null; // Reset baseline so next frame auto-calibrates with current posture
+    shouldCaptureBaselineRef.current = true;
     metricsRef.current.blinks = [];
     metricsRef.current.is_blinking = false;
     metricsRef.current.gaze_history = [];
@@ -165,7 +179,7 @@ export default function App() {
     if (fatigueRef.current) fatigueRef.current.style.width = '0%';
     if (statusRef.current) {
       statusRef.current.textContent = 'BIOMETRÍA Y CÁMARA RECALIBRADAS 🎯';
-      statusRef.current.className = 'px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 bg-emerald-500/20 text-emerald-400 border-emerald-500/40 uppercase shadow-2xl backdrop-blur-md z-20';
+      statusRef.current.className = 'px-4 py-2 mt-20 left-4 rounded-md border font-mono text-xs tracking-wider absolute bg-emerald-500/20 text-emerald-400 border-emerald-500/40 uppercase shadow-2xl backdrop-blur-md z-20';
     }
 
     setTimeout(() => {
@@ -358,57 +372,86 @@ export default function App() {
   }, [isStarted]);
 
   const onResults = (results: any) => {
-    const canvasCtx = canvasRef.current?.getContext('2d');
-    if (!canvasCtx || !canvasRef.current || !videoRef.current) return;
+    try {
+      if (!results) {
+        setFaceDetected(false);
+        setLandmarksCount(0);
+        return;
+      }
 
-    const width = canvasRef.current.width;
-    const height = canvasRef.current.height;
+      const faces = results.faceLandmarks;
+      if (!faces || faces.length === 0) {
+        setFaceDetected(false);
+        setLandmarksCount(0);
+      } else {
+        setFaceDetected(true);
+        setLandmarksCount(faces.length);
+      }
 
-    canvasCtx.save();
-    canvasCtx.clearRect(0, 0, width, height);
+      const canvasCtx = canvasRef.current?.getContext('2d');
+      if (canvasCtx && canvasRef.current && videoRef.current && results.image) {
+        const width = canvasRef.current.width;
+        const height = canvasRef.current.height;
 
-    // Flip horizonally to mirror
-    canvasCtx.translate(width, 0);
-    canvasCtx.scale(-1, 1);
-    
-    // Draw Video feed onto canvas
-    canvasCtx.drawImage(results.image, 0, 0, width, height);
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, width, height);
 
-    // MediaPipe overlays (Classic Python Styling)
-    if (results.faceLandmarks) {
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYEBROW, {color: '#FF3030', lineWidth: 1.5}); // Rojo
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 1.5});
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYEBROW, {color: '#30FF30', lineWidth: 1.5}); // Verde
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 1.5});
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_FACE_OVAL, {color: '#E0E0E0', lineWidth: 1.5}); // Blanco
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 1.5});
-    }
-    if (results.poseLandmarks && window.POSE_CONNECTIONS) {
-      window.drawConnectors(canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#E0E0E0', lineWidth: 2 });
-      window.drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#00FFFF', lineWidth: 1, radius: 2.5 });
-    }
+        // Flip horizontally to mirror
+        canvasCtx.translate(width, 0);
+        canvasCtx.scale(-1, 1);
+        
+        // Draw Video feed onto canvas
+        canvasCtx.drawImage(results.image, 0, 0, width, height);
 
-    canvasCtx.restore();
+        // MediaPipe overlays (Classic Python Styling)
+        if (faces && window.drawConnectors) {
+          if (window.FACEMESH_RIGHT_EYEBROW) window.drawConnectors(canvasCtx, faces, window.FACEMESH_RIGHT_EYEBROW, {color: '#FF3030', lineWidth: 1.5}); // Rojo
+          if (window.FACEMESH_RIGHT_EYE) window.drawConnectors(canvasCtx, faces, window.FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 1.5});
+          if (window.FACEMESH_LEFT_EYEBROW) window.drawConnectors(canvasCtx, faces, window.FACEMESH_LEFT_EYEBROW, {color: '#30FF30', lineWidth: 1.5}); // Verde
+          if (window.FACEMESH_LEFT_EYE) window.drawConnectors(canvasCtx, faces, window.FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 1.5});
+          if (window.FACEMESH_FACE_OVAL) window.drawConnectors(canvasCtx, faces, window.FACEMESH_FACE_OVAL, {color: '#E0E0E0', lineWidth: 1.5}); // Blanco
+          if (window.FACEMESH_LIPS) window.drawConnectors(canvasCtx, faces, window.FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 1.5});
+        }
+        if (results.poseLandmarks && window.POSE_CONNECTIONS && window.drawConnectors) {
+          window.drawConnectors(canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#E0E0E0', lineWidth: 2 });
+          if (window.drawLandmarks) window.drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#00FFFF', lineWidth: 1, radius: 2.5 });
+        }
 
-    if (isPausedRef.current) {
+        canvasCtx.restore();
+      }
+
+      // Telemetría FPS & Score
+      const now = Date.now();
+      frameTimesRef.current.push(now);
+      frameTimesRef.current = frameTimesRef.current.filter(t => now - t < 1000);
+      const calculatedFps = frameTimesRef.current.length;
+
+      if (now - lastTelemetryUpdateRef.current > 300) {
+        lastTelemetryUpdateRef.current = now;
+        setFps(calculatedFps);
+        setCurrentScore(Math.round(metricsRef.current.nivel_clap));
+      }
+
+      if (isPausedRef.current) {
         if (statusRef.current) {
-            statusRef.current.textContent = "SISTEMA PAUSADO (PULSA 'Q')";
-            statusRef.current.className = `px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 bg-blue-500/10 text-blue-400 border-blue-500/30 uppercase shadow-2xl backdrop-blur-md`;
+          statusRef.current.textContent = "SISTEMA PAUSADO (PULSA 'Q')";
+          statusRef.current.className = `px-4 py-2 mt-20 left-4 rounded-md border font-mono text-xs tracking-wider absolute bg-blue-500/10 text-blue-400 border-blue-500/30 uppercase shadow-2xl backdrop-blur-md z-20`;
         }
         return;
-    }
+      }
 
-    // ===========================================
-    // NÚCLEO BIOMÉTRICO P.D.E.F. v1.0
-    // ===========================================
-    let statusMsg = "EN ESTADO DE FLUJO (FIJACIÓN ACTIVA)";
-    let statusColor = "text-green-500";
-    let statusBg = "bg-green-500/10";
-    let statusBorder = "border-green-500/30";
+      // ===========================================
+      // NÚCLEO BIOMÉTRICO P.D.E.F. v1.0 (Commit 0d38d68 Fiel)
+      // ===========================================
+      let statusMsg = "EN ESTADO DE FLUJO (FIJACIÓN ACTIVA)";
+      let statusColor = "text-green-500";
+      let statusBg = "bg-green-500/10";
+      let statusBorder = "border-green-500/30";
 
-    const faces = results.faceLandmarks;
-    if (faces) {
-        const now = Date.now();
+      let distDuration = 0;
+      let blinkFreq = 0;
+
+      if (faces) {
         const metrics = metricsRef.current;
 
         // --- EXTRACCIÓN DE MALLA (PDEF) ---
@@ -436,7 +479,7 @@ export default function App() {
         }
         // Ventana deslizante de 60s
         metrics.blinks = metrics.blinks.filter(t => now - t < 60000);
-        const blinkFreq = metrics.blinks.length; 
+        blinkFreq = metrics.blinks.length; 
 
         // 2. ESTABILIDAD DE MIRADA (Varianza Pupilar)
         const midX = (pI.x + pD.x) / 2;
@@ -455,7 +498,7 @@ export default function App() {
             });
             variance /= metrics.gaze_history.length;
         }
-        // Invertimos varianza matemáticamente para estabildad 0-100
+        // Invertimos varianza matemáticamente para estabilidad 0-100
         let gazeStability = Math.max(0, Math.min(100, 100 - (variance * 50000)));
 
         // 3. ÁNGULO DE EULER (Dirección Yaw/Pitch)
@@ -476,7 +519,7 @@ export default function App() {
         } else {
             metrics.distraction_start = null;
         }
-        const distDuration = metrics.distraction_start ? (now - metrics.distraction_start) / 1000 : 0;
+        distDuration = metrics.distraction_start ? (now - metrics.distraction_start) / 1000 : 0;
 
         // 4. MICRO-EXPRESIONES (Estrés/Sobrecarga Tarea)
         const faceWidth = Math.hypot(faces[234].x - faces[454].x, faces[234].y - faces[454].y);
@@ -500,32 +543,6 @@ export default function App() {
         metrics.nivel_carga = isStressed ? Math.min(100, metrics.nivel_carga + 2) : 
                                (isDistracted ? Math.min(100, metrics.nivel_carga + 0.5) : Math.max(0, metrics.nivel_carga - 0.5));
 
-        // --- CÁLCULO DE ESTADO DEL AVATAR FOCUSBUD ---
-        let proposedAvatarState: FocusBudState = 'ENFOQUE';
-
-        if (distDuration > 3.0) {
-            proposedAvatarState = 'ALERTA_SUAVE';
-        } else if (blinkFreq > 25 || metrics.nivel_carga > 70 || EAR < 0.15) {
-            proposedAvatarState = 'FATIGA';
-        } else if (isStressed && variance < 0.00001 && metrics.nivel_carga > 85) {
-            proposedAvatarState = 'PARALISIS';
-        } else {
-            proposedAvatarState = 'ENFOQUE';
-        }
-
-        // Throttling / Histeresis de 500ms para actualizaciones de estado en React
-        const currentTime = Date.now();
-        if (Date.now() < celebrationUntilRef.current) {
-            // Mantener estado CELEBRACION durante la ventana de recompensa
-        } else if (proposedAvatarState !== lastAvatarStateRef.current.state) {
-            if (currentTime - lastAvatarStateRef.current.time > 500) {
-                lastAvatarStateRef.current = { state: proposedAvatarState, time: currentTime };
-                triggerStateAlert(proposedAvatarState);
-            }
-        } else {
-            lastAvatarStateRef.current.time = currentTime;
-        }
-
         // --- RENDERIZADO VISUAL "JUICE" & AUTO-CHAT ---
         if (isStressed) {
             statusMsg = "⚠️ ESTRÉS COGNITIVO DETECTADO (CEÑO)";
@@ -545,23 +562,44 @@ export default function App() {
             statusBg = "bg-amber-500/10";
             statusBorder = "border-amber-500/30";
         }
-    } else {
-        statusMsg = "PDEF INACTIVO: ROSTRO NO DETECTADO";
-        statusColor = "text-zinc-600";
-        statusBg = "bg-zinc-800/10";
-        statusBorder = "border-zinc-800/30";
-    }
+      } else {
+          statusMsg = "PDEF INACTIVO: ROSTRO NO DETECTADO";
+          statusColor = "text-zinc-600";
+          statusBg = "bg-zinc-800/10";
+          statusBorder = "border-zinc-800/30";
+      }
 
-    // Direct DOM Update to prevent React Renders
-    if (focusRef.current) {
-        focusRef.current.style.width = `${metricsRef.current.nivel_clap}%`;
-    }
-    if (fatigueRef.current) {
-        fatigueRef.current.style.width = `${metricsRef.current.nivel_carga}%`;
-    }
-    if (statusRef.current) {
-        statusRef.current.textContent = statusMsg;
-        statusRef.current.className = `px-4 py-2 mt-4 rounded-md border font-mono text-xs tracking-wider absolute top-4 left-4 ${statusBg} ${statusColor} ${statusBorder} uppercase shadow-2xl backdrop-blur-md z-20`;
+      // Mapeo transparente derivado de las métricas puras de P.D.E.F. v1.0
+      let targetAvatarState: FocusBudState = 'ENFOQUE';
+      if (distDuration > 1.5 || metricsRef.current.nivel_clap < 50) {
+          targetAvatarState = 'ALERTA_SUAVE';
+      } else if (metricsRef.current.nivel_carga > 60 || blinkFreq > 25) {
+          targetAvatarState = 'FATIGA';
+      } else {
+          targetAvatarState = 'ENFOQUE';
+      }
+
+      if (avatarState !== targetAvatarState) {
+          setAvatarState(targetAvatarState);
+      }
+
+      // Direct DOM Update to prevent React Renders
+      if (focusRef.current) {
+          focusRef.current.style.width = `${metricsRef.current.nivel_clap}%`;
+      }
+      if (fatigueRef.current) {
+          fatigueRef.current.style.width = `${metricsRef.current.nivel_carga}%`;
+      }
+      if (statusRef.current) {
+          statusRef.current.textContent = statusMsg;
+          statusRef.current.className = `px-4 py-2 mt-20 left-4 rounded-md border font-mono text-xs tracking-wider absolute ${statusBg} ${statusColor} ${statusBorder} uppercase shadow-2xl backdrop-blur-md z-20`;
+      }
+      if (biometricError) {
+          setBiometricError(null);
+      }
+    } catch (err: any) {
+      console.error("Error en frame de MediaPipe:", err);
+      setBiometricError(String(err?.message || err));
     }
   };
 
@@ -571,6 +609,10 @@ export default function App() {
       metricsRef.current.nivel_clap = 100; // Dopamine CLAP boost
       metricsRef.current.nivel_carga = Math.max(0, metricsRef.current.nivel_carga - 30); // Less stress
       
+      // Activar ventana de Celebración de 3.5s para el robot FocusBud
+      celebrationUntilRef.current = Date.now() + 3500;
+      triggerStateAlert('CELEBRACION');
+
       // Trigger Kawaii Reward
       if (currentStepIdx + 1 < steps.length) {
         const randomKao = KAOMOJIS[Math.floor(Math.random() * KAOMOJIS.length)];
@@ -768,6 +810,24 @@ export default function App() {
                     >
                         {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
                     </button>
+                </div>
+
+                {/* Insignia de Telemetría Biométrica en Vivo (Debug Overlay) */}
+                <div className="absolute top-3 left-3 z-30 bg-black/80 border border-zinc-700 p-2.5 rounded-xl text-[10px] font-mono text-zinc-300 pointer-events-none flex flex-col gap-1 shadow-2xl backdrop-blur-md">
+                    <div className="flex items-center gap-1.5 font-bold">
+                        Estado: <span className={faceDetected ? "text-green-400" : "text-red-400"}>{faceDetected ? "● ROSTRO ACTIVO" : "○ BUSCANDO ROSTRO"}</span>
+                    </div>
+                    <div className="text-zinc-400">
+                        FPS: <span className="text-white font-bold">{fps}</span> | Puntos: <span className="text-white font-bold">{landmarksCount}</span>
+                    </div>
+                    <div className="text-zinc-400">
+                        Score Enfoque: <span className="text-emerald-400 font-bold">{currentScore}%</span>
+                    </div>
+                    {biometricError && (
+                        <div className="text-red-400 font-bold animate-pulse mt-0.5 max-w-[220px] truncate">
+                            Err: {biometricError}
+                        </div>
+                    )}
                 </div>
 
                 {/* 1. Bocadillo de Texto Flotante (Arriba de FocusBud) */}
