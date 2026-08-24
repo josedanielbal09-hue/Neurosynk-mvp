@@ -1,0 +1,43 @@
+# Environment & Secret variables (CRITICAL: Never upload API keys to GitHub)
+.env
+.env.local
+.env.*.local
+*.env
+
+# Virtual Environments (Python)
+.venv/
+env/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.joblib
+*.pkl
+
+# Node.js / JavaScript
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+dist-ssr/
+*.local
+
+# Logs and telemetry runtime dumps
+logs/*.json
+logs/*.log
+*.log
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Backup & Legacy archive (Keeps old versions safely on your PC without uploading to GitHub)
+legacy_archive/
+descargas_focusbud/
+*.zip
+

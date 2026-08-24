@@ -1,0 +1,8 @@
+{
+  "name": "NeuroSynk MVP",
+  "description": "Biometric neuro-productivity mentor using MediaPipe for focus and fatigue analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
