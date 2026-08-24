@@ -1132,18 +1132,22 @@ export default function App() {
                 <div className="space-y-2">
                   <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 flex justify-between items-center">
                     <div>
-                      <div className="text-xs font-mono text-zinc-400">Total Fotogramas</div>
+                      <div className="text-xs font-mono text-zinc-400">Total Fotogramas (Ilimitado)</div>
                       <div className="text-2xl font-black text-white font-mono">{recordedCount}</div>
                     </div>
-                    <div className="text-xs font-mono text-emerald-400">~{((recordedCount * 70) / 1024).toFixed(1)} KB</div>
+                    <div className="text-xs font-mono text-emerald-400 font-bold">
+                      {recordedCount * 140 > 1024 * 1024
+                        ? `~${((recordedCount * 140) / (1024 * 1024)).toFixed(2)} MB`
+                        : `~${((recordedCount * 140) / 1024).toFixed(1)} KB`}
+                    </div>
                   </div>
 
                   <div className="p-4 rounded-2xl bg-zinc-950 border border-zinc-800 flex justify-between items-center">
                     <div>
-                      <div className="text-xs font-mono text-zinc-400">Ventanas de 2s</div>
+                      <div className="text-xs font-mono text-zinc-400">Ventanas 2s Agregadas</div>
                       <div className="text-2xl font-black text-emerald-400 font-mono">{windowCount}</div>
                     </div>
-                    <div className="text-xs font-mono text-emerald-400 font-bold">TensorFlow Ready</div>
+                    <div className="text-xs font-mono text-emerald-400 font-bold">Sin Límite de Tiempo</div>
                   </div>
                 </div>
 
