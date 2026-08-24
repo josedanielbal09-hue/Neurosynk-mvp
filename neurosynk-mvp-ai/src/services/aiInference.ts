@@ -47,12 +47,12 @@ export interface EpisodicMemorySnapshot {
  * Elimina el jitter óptico y los saltos bruscos entre clases biométricas
  */
 export class TemporalStabilityFilter {
-  private smoothedProbs: number[] = [1.0, 0.0, 0.0, 0.0, 0.0];
+  private smoothedProbs: number[] = [0.16, 0.16, 0.16, 0.16, 0.16, 0.16];
   private currentStableClass: number = 0;
   private candidateClass: number = 0;
   private candidateStartTime: number = 0;
-  private alpha: number = 0.20; // Factor de suavizado exponencial
-  private persistenceThresholdMs: number = 1500; // 1.5s de persistencia para cambiar estado
+  private alpha: number = 0.45; // Factor de respuesta dinámico y ágil
+  private persistenceThresholdMs: number = 400; // 400ms para reacción inmediata a movimientos
 
   public filter(rawProbs: number[]): {
     stableClassIndex: number;
@@ -61,9 +61,14 @@ export class TemporalStabilityFilter {
   } {
     const now = Date.now();
 
-    // 1. Filtro Exponencial Pasa-Bajas (EMA): S(t) = alpha * X(t) + (1 - alpha) * S(t-1)
-    this.smoothedProbs = this.smoothedProbs.map((prev, i) => {
-      const raw = rawProbs[i] ?? 0;
+    // Asegurar dimensionamiento adecuado para 6 clases
+    if (this.smoothedProbs.length !== rawProbs.length) {
+      this.smoothedProbs = new Array(rawProbs.length).fill(1 / rawProbs.length);
+    }
+
+    // 1. Filtro Exponencial Pasa-Bajas Dinámico (EMA): S(t) = alpha * X(t) + (1 - alpha) * S(t-1)
+    this.smoothedProbs = rawProbs.map((raw, i) => {
+      const prev = this.smoothedProbs[i] ?? (1 / rawProbs.length);
       return this.alpha * raw + (1.0 - this.alpha) * prev;
     });
 
@@ -81,13 +86,12 @@ export class TemporalStabilityFilter {
       }
     });
 
-    // 3. Ventana de Histéresis Temporal (Evita parpadeos entre clases)
+    // 3. Ventana de Histéresis Temporal Reactiva
     if (maxIdx !== this.currentStableClass) {
       if (maxIdx !== this.candidateClass) {
         this.candidateClass = maxIdx;
         this.candidateStartTime = now;
       } else if (now - this.candidateStartTime >= this.persistenceThresholdMs) {
-        // La clase candidata se mantuvo estable durante el umbral mínimo
         this.currentStableClass = maxIdx;
       }
     } else {
@@ -102,6 +106,7 @@ export class TemporalStabilityFilter {
     };
   }
 }
+
 
 export const temporalFilter = new TemporalStabilityFilter();
 
@@ -344,51 +349,61 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
     let stressLevel = 10;
 
     switch (maxIdx) {
-      case 0: // ENFOQUE
-        statusMessage = "EN ESTADO DE FLUJO (FIJACIÓN ACTIVA)";
+      case 0: // ESTUDIO NORMAL / NEUTRO
+        statusMessage = "ESTUDIO BASAL / LECTURA TRANQUILA";
         badgeColor = "text-emerald-400";
         badgeBg = "bg-emerald-500/10";
         badgeBorder = "border-emerald-500/30";
-        focusScore = Math.min(100, Math.round(maxProb * 100));
-        stressLevel = Math.max(5, Math.round((1 - maxProb) * 30));
+        focusScore = Math.min(85, Math.max(70, Math.round(maxProb * 80 + 10)));
+        stressLevel = Math.max(5, Math.min(25, Math.round((1 - maxProb) * 30)));
         break;
 
-      case 1: // DISTRACCIÓN
-        statusMessage = "DISTRACCIÓN DETECTADA (MIRADA FUERA DE FOCO)";
+      case 1: // ENFOQUE PROFUNDO (FLOW)
+        statusMessage = "EN ESTADO DE FLUJO (ALTA FIJACIÓN OCULAR)";
+        badgeColor = "text-sky-400";
+        badgeBg = "bg-sky-500/10";
+        badgeBorder = "border-sky-500/30";
+        focusScore = Math.min(100, Math.max(88, Math.round(maxProb * 100)));
+        stressLevel = Math.max(5, Math.round((1 - maxProb) * 20));
+        break;
+
+      case 2: // DISTRACCIÓN
+        statusMessage = "DISTRACCIÓN DETECTADA (MIRADA / CABEZA FUERA DE FOCO)";
         badgeColor = "text-amber-400";
         badgeBg = "bg-amber-500/10";
         badgeBorder = "border-amber-500/30";
-        focusScore = Math.max(20, Math.round((1 - maxProb) * 60));
+        focusScore = Math.max(15, Math.min(45, Math.round((1 - maxProb) * 50)));
         stressLevel = Math.round(maxProb * 40 + 20);
         break;
 
-      case 2: // FATIGA
+      case 3: // FATIGA
         statusMessage = "FATIGA COGNITIVA (PARPADEOS LENTOS / SOMNOLENCIA)";
         badgeColor = "text-blue-400";
         badgeBg = "bg-blue-500/10";
         badgeBorder = "border-blue-500/30";
-        focusScore = Math.max(15, Math.round((1 - maxProb) * 50));
+        focusScore = Math.max(10, Math.min(35, Math.round((1 - maxProb) * 40)));
         stressLevel = Math.round(maxProb * 50 + 30);
         break;
 
-      case 3: // SOBREESTIMULACIÓN
+      case 4: // SOBREESTIMULACIÓN
         statusMessage = "SOBREESTIMULACIÓN / INQUIETUD MOTORA ELEVADA";
         badgeColor = "text-rose-400";
         badgeBg = "bg-rose-500/10";
         badgeBorder = "border-rose-500/30";
-        focusScore = Math.max(25, Math.round((1 - maxProb) * 55));
-        stressLevel = Math.min(100, Math.round(maxProb * 80 + 20));
+        focusScore = Math.max(15, Math.min(40, Math.round((1 - maxProb) * 45)));
+        stressLevel = Math.min(100, Math.max(65, Math.round(maxProb * 80 + 20)));
         break;
 
-      case 4: // AGOBIO POSTURAL
+      case 5: // AGOBIO POSTURAL
         statusMessage = "ESTRÉS / AGOBIO POSTURAL (COLAPSO O TENSIÓN FÍSICA)";
         badgeColor = "text-purple-400";
         badgeBg = "bg-purple-500/10";
         badgeBorder = "border-purple-500/30";
-        focusScore = Math.max(10, Math.round((1 - maxProb) * 40));
-        stressLevel = Math.min(100, Math.round(maxProb * 90 + 10));
+        focusScore = Math.max(10, Math.min(30, Math.round((1 - maxProb) * 35)));
+        stressLevel = Math.min(100, Math.max(70, Math.round(maxProb * 90 + 10)));
         break;
     }
+
 
     const result: AIPredictionResult = {
       classIndex: maxIdx,
