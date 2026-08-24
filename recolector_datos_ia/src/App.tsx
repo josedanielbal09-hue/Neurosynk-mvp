@@ -109,16 +109,25 @@ export default function App() {
     probabilities: number[];
   } | null>(null);
 
-  // Métricas en vivo
+  // Métricas en vivo de Alta Definición
   const [liveMetrics, setLiveMetrics] = useState({
     ear: 0,
+    earLeft: 0,
+    earRight: 0,
+    perclos: 0,
+    blinkCount: 0,
     yaw: 0,
     pitch: 0,
-    frown: 0,
-    shoulderAngle: 0,
-    noseDelta: 0,
-    mar: 0,
     rollAngle: 0,
+    headForward: 0,
+    frown: 0,
+    browRaise: 0,
+    mar: 0,
+    jawDrop: 0,
+    shoulderAngle: 0,
+    torsoSlump: 0,
+    noseDelta: 0,
+    touchZone: 'ninguna'
   });
 
   // Video MP4
@@ -132,13 +141,20 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const holisticRef = useRef<any>(null);
 
-  // Identidad de Sujeto y Sesión (Soporte ilimitado y multivariable)
+  // Identidad de Sujeto, Sesión y Tarea (Soporte HD)
   const [subjectId, setSubjectId] = useState<string>('Sujeto_01');
   const [sessionId, setSessionId] = useState<string>('Sesion_A');
+  const [taskName, setTaskName] = useState<string>('Lectura_Estudio');
   const subjectIdRef = useRef<string>('Sujeto_01');
   const sessionIdRef = useRef<string>('Sesion_A');
+  const taskNameRef = useRef<string>('Lectura_Estudio');
   subjectIdRef.current = subjectId;
   sessionIdRef.current = sessionId;
+  taskNameRef.current = taskName;
+
+  const blinkCountRef = useRef<number>(0);
+  const isBlinkingRef = useRef<boolean>(false);
+  const perclosBufferRef = useRef<{ isClosed: boolean; t: number }[]>([]);
 
   const frameTimesRef = useRef<number[]>([]);
   const lastNosePosRef = useRef<{ x: number; y: number } | null>(null);
@@ -539,39 +555,45 @@ export default function App() {
 
     canvasCtx.restore();
 
-    // EXTRACCIÓN DE MÉTRICAS BIOMÉTRICAS
+    // EXTRACCIÓN DE MÉTRICAS BIOMÉTRICAS DE ALTA DEFINICIÓN
     const faces = results.faceLandmarks;
     if (!faces || faces.length === 0) return;
 
-    const upperEye = faces[159];
-    const lowerEye = faces[145];
-    const outerEye = faces[33];
-    const innerEye = faces[133];
-    const cejaI = faces[65];
-    const cejaD = faces[295];
+    // 1. Ojos y Parpadeos
+    const rUpper = faces[159], rLower = faces[145], rOuter = faces[33], rInner = faces[133];
+    const lUpper = faces[386], lLower = faces[374], lOuter = faces[263], lInner = faces[362];
+
+    const rHeight = Math.hypot(rUpper.x - rLower.x, rUpper.y - rLower.y);
+    const rWidth = Math.hypot(rOuter.x - rInner.x, rOuter.y - rInner.y);
+    const earRight = rHeight / Math.max(0.001, rWidth);
+
+    const lHeight = Math.hypot(lUpper.x - lLower.x, lUpper.y - lLower.y);
+    const lWidth = Math.hypot(lOuter.x - lInner.x, lOuter.y - lInner.y);
+    const earLeft = lHeight / Math.max(0.001, lWidth);
+
+    const earAvg = (earRight + earLeft) / 2;
+
+    // Detección de Parpadeos
+    if (earAvg < 0.19) {
+      if (!isBlinkingRef.current) {
+        blinkCountRef.current += 1;
+        isBlinkingRef.current = true;
+      }
+    } else if (earAvg > 0.23) {
+      isBlinkingRef.current = false;
+    }
+
+    // PERCLOS (ventana deslizante de 30 segundos)
+    perclosBufferRef.current.push({ isClosed: earAvg < 0.20, t: now });
+    perclosBufferRef.current = perclosBufferRef.current.filter(p => now - p.t <= 30000);
+    const closedCount = perclosBufferRef.current.filter(p => p.isClosed).length;
+    const perclos = perclosBufferRef.current.length > 0 ? closedCount / perclosBufferRef.current.length : 0;
+
+    // Mirada e Iris
     const nose = faces[1];
     const mouth = faces[14];
-
-    const eyeHeight = Math.hypot(upperEye.x - lowerEye.x, upperEye.y - lowerEye.y);
-    const eyeWidth = Math.hypot(outerEye.x - innerEye.x, outerEye.y - innerEye.y);
-    const EAR = eyeHeight / Math.max(0.001, eyeWidth);
-
-    const dx = faces[263].x - faces[33].x;
-    const dy = mouth.y - ((faces[263].y + faces[33].y) / 2);
-    const yawRatio = dx !== 0 ? (nose.x - faces[33].x) / dx : 0.5;
-    const pitchRatio = dy !== 0 ? (nose.y - ((faces[263].y + faces[33].y) / 2)) / dy : 0.5;
-
-    const faceWidth = Math.hypot(faces[234].x - faces[454].x, faces[234].y - faces[454].y);
-    const eyebrowDist = faceWidth !== 0 ? Math.hypot(cejaI.x - cejaD.x, cejaI.y - cejaD.y) / faceWidth : 0.22;
-
-    let noseDelta = 0;
-    if (lastNosePosRef.current) {
-      noseDelta = Math.hypot(nose.x - lastNosePosRef.current.x, nose.y - lastNosePosRef.current.y);
-    }
-    lastNosePosRef.current = { x: nose.x, y: nose.y };
-
-    const pI = faces[468] || upperEye;
-    const pD = faces[473] || faces[386];
+    const pI = faces[468] || rUpper;
+    const pD = faces[473] || lUpper;
     const midX = (pI.x + pD.x) / 2;
     const midY = (pI.y + pD.y) / 2;
     gazeHistoryRef.current.push({ x: midX, y: midY, t: now });
@@ -589,42 +611,116 @@ export default function App() {
       gazeVariance /= gazeHistoryRef.current.length;
     }
 
+    // 2. Pose Cefálica 3D y Protrusión
+    const dx = faces[263].x - faces[33].x;
+    const dy = mouth.y - ((faces[263].y + faces[33].y) / 2);
+    const yawRatio = dx !== 0 ? (nose.x - faces[33].x) / dx : 0.5;
+    const pitchRatio = dy !== 0 ? (nose.y - ((faces[263].y + faces[33].y) / 2)) / dy : 0.5;
+
+    const rollRad = Math.atan2(faces[263].y - faces[33].y, faces[263].x - faces[33].x);
+    const rollAngle = rollRad * (180 / Math.PI);
+
+    let headForwardDist = 0.15;
     let shoulderAngle = 0;
+    let torsoSlump = 0.5;
     const pose = results.poseLandmarks;
-    if (pose && pose[11] && pose[12] && pose[13]) {
-      const rad = Math.atan2(pose[13].y - pose[11].y, pose[13].x - pose[11].x) - Math.atan2(pose[12].y - pose[11].y, pose[12].x - pose[11].x);
-      shoulderAngle = Math.abs((rad * 180) / Math.PI);
+    if (pose && pose[11] && pose[12]) {
+      const shMidX = (pose[11].x + pose[12].x) / 2;
+      const shMidY = (pose[11].y + pose[12].y) / 2;
+      headForwardDist = Math.hypot(nose.x - shMidX, nose.y - shMidY);
+
+      if (pose[13]) {
+        const rad = Math.atan2(pose[13].y - pose[11].y, pose[13].x - pose[11].x) - Math.atan2(pose[12].y - pose[11].y, pose[12].x - pose[11].x);
+        shoulderAngle = Math.abs((rad * 180) / Math.PI);
+      }
+
+      if (pose[23] && pose[24]) {
+        const hipMidY = (pose[23].y + pose[24].y) / 2;
+        torsoSlump = Math.abs(hipMidY - shMidY);
+      }
     }
+
+    // Inquietud de nariz
+    let noseDelta = 0;
+    if (lastNosePosRef.current) {
+      noseDelta = Math.hypot(nose.x - lastNosePosRef.current.x, nose.y - lastNosePosRef.current.y);
+    }
+    lastNosePosRef.current = { x: nose.x, y: nose.y };
+
+    // 3. Tensión Facial FACS (Ceño, Elevación, Boca, Mandíbula)
+    const faceWidth = Math.hypot(faces[234].x - faces[454].x, faces[234].y - faces[454].y);
+    const frownDist = faceWidth !== 0 ? Math.hypot(faces[65].x - faces[295].x, faces[65].y - faces[295].y) / faceWidth : 0.22;
+
+    const rBrowRaise = Math.hypot(faces[65].x - rUpper.x, faces[65].y - rUpper.y);
+    const lBrowRaise = Math.hypot(faces[295].x - lUpper.x, faces[295].y - lUpper.y);
+    const browRaiseAvg = (rBrowRaise + lBrowRaise) / 2;
 
     const mouthTop = faces[13] || mouth;
     const mouthBottom = faces[14] || mouth;
     const mouthLeft = faces[61] || faces[33];
     const mouthRight = faces[291] || faces[263];
-
     const mouthHeight = Math.hypot(mouthTop.x - mouthBottom.x, mouthTop.y - mouthBottom.y);
     const mouthWidth = Math.hypot(mouthLeft.x - mouthRight.x, mouthLeft.y - mouthRight.y);
     const MAR = mouthWidth !== 0 ? (mouthHeight / Math.max(0.001, mouthWidth)) : 0.05;
 
-    const rollRad = Math.atan2(faces[263].y - faces[33].y, faces[263].x - faces[33].x);
-    const rollAngle = rollRad * (180 / Math.PI);
+    const chin = faces[152] || mouthBottom;
+    const jawDrop = faceWidth !== 0 ? Math.hypot(mouthTop.x - chin.x, mouthTop.y - chin.y) / faceWidth : 0.4;
+    const lipCornerDist = faceWidth !== 0 ? mouthWidth / faceWidth : 0.35;
+
+    // 4. Detección de Manos y Zonas de Contacto (Touch Hotspots)
+    const rightHand = results.rightHandLandmarks as any[] | undefined;
+    const leftHand = results.leftHandLandmarks as any[] | undefined;
+    const handsDetected = (rightHand ? 1 : 0) + (leftHand ? 1 : 0);
+
+    let handFaceDist = 1.0;
+    let touchZone = 'ninguna';
+    const activeHand = rightHand || leftHand;
+    if (activeHand && activeHand.length > 0) {
+      const hx = activeHand.reduce((s: number, p: any) => s + p.x, 0) / activeHand.length;
+      const hy = activeHand.reduce((s: number, p: any) => s + p.y, 0) / activeHand.length;
+      handFaceDist = Math.hypot(hx - nose.x, hy - nose.y);
+
+      // Clasificación de zona anatómica de contacto
+      const distChin = Math.hypot(hx - chin.x, hy - chin.y);
+      const distForehead = Math.hypot(hx - faces[10].x, hy - faces[10].y);
+      const distEyes = Math.hypot(hx - nose.x, hy - nose.y);
+      const distCheek = Math.min(Math.hypot(hx - faces[234].x, hy - faces[234].y), Math.hypot(hx - faces[454].x, hy - faces[454].y));
+      const distMouth = Math.hypot(hx - mouth.x, hy - mouth.y);
+
+      if (distChin < 0.12) touchZone = 'barbilla';
+      else if (distForehead < 0.12) touchZone = 'frente';
+      else if (distEyes < 0.10) touchZone = 'ojos';
+      else if (distMouth < 0.10) touchZone = 'boca';
+      else if (distCheek < 0.12) touchZone = 'mejilla';
+      else if (handFaceDist < 0.22) touchZone = 'cerca_rostro';
+    }
 
     setLiveMetrics({
-      ear: EAR,
+      ear: earAvg,
+      earLeft: earLeft,
+      earRight: earRight,
+      perclos: perclos,
+      blinkCount: blinkCountRef.current,
       yaw: yawRatio,
       pitch: pitchRatio,
-      frown: eyebrowDist,
-      shoulderAngle: shoulderAngle,
-      noseDelta: noseDelta,
+      rollAngle: rollAngle,
+      headForward: headForwardDist,
+      frown: frownDist,
+      browRaise: browRaiseAvg,
       mar: MAR,
-      rollAngle: rollAngle
+      jawDrop: jawDrop,
+      shoulderAngle: shoulderAngle,
+      torsoSlump: torsoSlump,
+      noseDelta: noseDelta,
+      touchZone: touchZone
     });
 
-    // Buffer rodante real de 2 segundos para la Inferencia en Vivo (Sin datos duplicados/hardcodeados)
+    // Buffer rodante de 2 segundos para la Inferencia en Vivo
     window2sBufferRef.current.push({
-      ear: EAR,
+      ear: earAvg,
       yaw: yawRatio,
       pitch: pitchRatio,
-      frown: eyebrowDist,
+      frown: frownDist,
       noseDelta: noseDelta,
       gazeVar: gazeVariance,
       shoulder: shoulderAngle,
@@ -634,7 +730,7 @@ export default function App() {
     });
     window2sBufferRef.current = window2sBufferRef.current.filter(f => now - f.t <= 2000);
 
-    // PREDICCIÓN EN VIVO CON LA RED NEURONAL ENTRENADA SOBRE LA VENTANA REAL
+    // Predicción en vivo con el modelo entrenado
     if (trainedResult && window2sBufferRef.current.length >= 4 && now - lastInferenceTimeRef.current >= 200) {
       lastInferenceTimeRef.current = now;
       const wFrames = window2sBufferRef.current;
@@ -686,39 +782,37 @@ export default function App() {
       setLivePrediction(pred);
     }
 
-    // FIX 3 — Detección real de manos desde Holistic
-    const rightHand = results.rightHandLandmarks as any[] | undefined;
-    const leftHand = results.leftHandLandmarks as any[] | undefined;
-    const handsDetected = (rightHand ? 1 : 0) + (leftHand ? 1 : 0);
-
-    let handFaceDist = 1.0;
-    const activeHand = rightHand || leftHand;
-    if (activeHand && activeHand.length > 0) {
-      // Centroide de la mano (promedio de todos los landmarks)
-      const hx = activeHand.reduce((s: number, p: any) => s + p.x, 0) / activeHand.length;
-      const hy = activeHand.reduce((s: number, p: any) => s + p.y, 0) / activeHand.length;
-      // Nariz como referencia del centro del rostro
-      handFaceDist = Math.hypot(hx - nose.x, hy - nose.y);
-    }
-
-    // Guardado en Buffer de datos con Identidad del Sujeto y Sesión
+    // Guardado en Buffer con Telemetría HD Completa
     const currentRef = activeStateRef.current;
     if (isRecordingRef.current && currentRef.label >= 0) {
       const record: FrameRecord = {
         timestamp: now,
         subject_id: subjectIdRef.current || 'anon',
         session_id: sessionIdRef.current || 'session_1',
-        ear: EAR,
+        task_name: taskNameRef.current || 'estudio',
+        ear_avg: earAvg,
+        ear_left: earLeft,
+        ear_right: earRight,
+        gaze_x: midX,
+        gaze_y: midY,
+        gaze_variance: gazeVariance,
+        perclos: perclos,
+        blink_count: blinkCountRef.current,
         yaw_ratio: yawRatio,
         pitch_ratio: pitchRatio,
-        eyebrow_dist: eyebrowDist,
-        nose_delta: noseDelta,
-        gaze_variance: gazeVariance,
-        shoulder_angle: shoulderAngle,
-        mar: MAR,
         roll_angle: rollAngle,
+        head_forward_dist: headForwardDist,
+        nose_delta: noseDelta,
+        frown_dist: frownDist,
+        brow_raise_avg: browRaiseAvg,
+        mar: MAR,
+        jaw_drop: jawDrop,
+        lip_corner_dist: lipCornerDist,
+        shoulder_angle: shoulderAngle,
+        torso_slump: torsoSlump,
         hands_detected: handsDetected,
         hand_face_dist: handFaceDist,
+        touch_zone: touchZone,
         label: currentRef.label,
         label_name: currentRef.name
       };
@@ -754,7 +848,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* IDENTIDAD DE PARTICIPANTE Y SESIÓN ILIMITADA */}
+        {/* IDENTIDAD DE PARTICIPANTE, SESIÓN Y ACTIVIDAD */}
         <div className="flex flex-wrap items-center gap-3 bg-zinc-950 p-2.5 rounded-2xl border border-zinc-800 font-mono text-xs">
           <div className="flex items-center gap-1.5">
             <span className="text-zinc-500 text-[10px] uppercase font-bold">Participante:</span>
@@ -763,17 +857,27 @@ export default function App() {
               value={subjectId}
               onChange={(e) => setSubjectId(e.target.value)}
               placeholder="Ej: P01, Juan_M"
-              className="bg-zinc-900 border border-zinc-700 text-emerald-400 px-2.5 py-1 rounded-lg text-xs font-bold w-28 focus:outline-none focus:border-emerald-500"
+              className="bg-zinc-900 border border-zinc-700 text-emerald-400 px-2.5 py-1 rounded-lg text-xs font-bold w-24 focus:outline-none focus:border-emerald-500"
             />
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="text-zinc-500 text-[10px] uppercase font-bold">Sesión/Tarea:</span>
+            <span className="text-zinc-500 text-[10px] uppercase font-bold">Sesión:</span>
             <input
               type="text"
               value={sessionId}
               onChange={(e) => setSessionId(e.target.value)}
-              placeholder="Ej: Lectura_1, Stroop"
-              className="bg-zinc-900 border border-zinc-700 text-purple-300 px-2.5 py-1 rounded-lg text-xs font-bold w-28 focus:outline-none focus:border-purple-500"
+              placeholder="Ej: Sesion_1"
+              className="bg-zinc-900 border border-zinc-700 text-purple-300 px-2.5 py-1 rounded-lg text-xs font-bold w-20 focus:outline-none focus:border-purple-500"
+            />
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-zinc-500 text-[10px] uppercase font-bold">Tarea:</span>
+            <input
+              type="text"
+              value={taskName}
+              onChange={(e) => setTaskName(e.target.value)}
+              placeholder="Ej: Lectura_Libreta, Pantalla"
+              className="bg-zinc-900 border border-zinc-700 text-amber-300 px-2.5 py-1 rounded-lg text-xs font-bold w-28 focus:outline-none focus:border-amber-500"
             />
           </div>
         </div>
@@ -1030,47 +1134,70 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* FIX 4 — HUD en Vivo: MAR, Roll y métricas clave */}
-                <div className="p-3 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-2">
-                  <div className="text-[10px] font-mono text-zinc-500 uppercase font-bold">Sensores en Vivo</div>
-                  <div className="grid grid-cols-2 gap-2">
+                {/* PANEL DE SENSORES BIOMÉTRICOS DE ALTA DEFINICIÓN */}
+                <div className="p-3.5 rounded-2xl bg-zinc-950 border border-zinc-800 space-y-3">
+                  <div className="flex justify-between items-center text-[10px] font-mono text-zinc-500 uppercase font-bold">
+                    <span>Telemetría HD en Vivo</span>
+                    <span className="text-emerald-400">28+ Señales</span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2">
                     <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                      <div className="text-[9px] font-mono text-zinc-500 uppercase">EAR (Ojos)</div>
-                      <div className={`text-sm font-black font-mono ${
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">EAR (Ojos)</div>
+                      <div className={`text-xs font-black font-mono ${
                         liveMetrics.ear < 0.2 ? 'text-blue-400' : 'text-emerald-400'
                       }`}>{liveMetrics.ear.toFixed(3)}</div>
                     </div>
                     <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                      <div className="text-[9px] font-mono text-zinc-500 uppercase">MAR (Boca)</div>
-                      <div className={`text-sm font-black font-mono ${
-                        liveMetrics.mar > 0.5 ? 'text-amber-400' : 'text-emerald-400'
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">PERCLOS</div>
+                      <div className={`text-xs font-black font-mono ${
+                        liveMetrics.perclos > 0.3 ? 'text-amber-400' : 'text-zinc-300'
+                      }`}>{(liveMetrics.perclos * 100).toFixed(0)}%</div>
+                    </div>
+                    <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">Parpadeos</div>
+                      <div className="text-xs font-black font-mono text-white">{liveMetrics.blinkCount}</div>
+                    </div>
+                    <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">MAR (Boca)</div>
+                      <div className={`text-xs font-black font-mono ${
+                        liveMetrics.mar > 0.4 ? 'text-amber-400' : 'text-emerald-400'
                       }`}>{liveMetrics.mar.toFixed(3)}</div>
                     </div>
                     <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                      <div className="text-[9px] font-mono text-zinc-500 uppercase">Roll (°)</div>
-                      <div className={`text-sm font-black font-mono ${
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">Roll (°)</div>
+                      <div className={`text-xs font-black font-mono ${
                         Math.abs(liveMetrics.rollAngle) > 10 ? 'text-amber-400' : 'text-emerald-400'
                       }`}>{liveMetrics.rollAngle.toFixed(1)}°</div>
                     </div>
                     <div className="flex flex-col items-center p-2 rounded-xl bg-zinc-900 border border-zinc-800">
-                      <div className="text-[9px] font-mono text-zinc-500 uppercase">Hombros (°)</div>
-                      <div className="text-sm font-black font-mono text-zinc-300">{liveMetrics.shoulderAngle.toFixed(1)}°</div>
+                      <div className="text-[8px] font-mono text-zinc-500 uppercase">Hombros (°)</div>
+                      <div className="text-xs font-black font-mono text-zinc-300">{liveMetrics.shoulderAngle.toFixed(1)}°</div>
                     </div>
                   </div>
+
+                  {/* Zona de contacto de manos */}
+                  <div className="p-2 rounded-xl bg-zinc-900 border border-zinc-800 flex justify-between items-center text-[10px] font-mono">
+                    <span className="text-zinc-500">Contacto Mano-Rostro:</span>
+                    <span className={`font-bold uppercase ${liveMetrics.touchZone !== 'ninguna' ? 'text-purple-400 font-black' : 'text-zinc-500'}`}>
+                      {liveMetrics.touchZone}
+                    </span>
+                  </div>
+
                   {/* Barra de bostezo */}
                   <div className="space-y-1">
                     <div className="flex justify-between text-[9px] font-mono text-zinc-500">
-                      <span>Bostezo (MAR)</span>
-                      <span className={liveMetrics.mar > 0.5 ? 'text-amber-400 font-bold' : ''}>
-                        {liveMetrics.mar > 0.5 ? '⚠ BOSTEZO DETECTADO' : 'Normal'}
+                      <span>Apertura Bucal (Bostezo / MAR)</span>
+                      <span className={liveMetrics.mar > 0.4 ? 'text-amber-400 font-bold' : ''}>
+                        {liveMetrics.mar > 0.4 ? '⚠ BOSTEZO / TENSIÓN' : 'Normal'}
                       </span>
                     </div>
                     <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all duration-100 ${
-                          liveMetrics.mar > 0.5 ? 'bg-amber-400' : 'bg-emerald-500'
+                          liveMetrics.mar > 0.4 ? 'bg-amber-400' : 'bg-emerald-500'
                         }`}
-                        style={{ width: `${Math.min(100, liveMetrics.mar * 120).toFixed(0)}%` }}
+                        style={{ width: `${Math.min(100, liveMetrics.mar * 150).toFixed(0)}%` }}
                       />
                     </div>
                   </div>
