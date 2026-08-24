@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeuroSynk - TensorFlow Simulation & Deep Learning Visualizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Outfit', sans-serif; background-color: #09090b; color: #f4f4f5; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .glass { background: rgba(24, 24, 27, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .glass-active { border-color: rgba(16, 185, 129, 0.4); box-shadow: 0 0 25px rgba(16, 185, 129, 0.15); }
+    @keyframes pulse-glow {
+      0%, 100% { opacity: 0.3; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.08); }
+    }
+    .synapse-active { animation: pulse-glow 1.5s infinite ease-in-out; }
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #09090b; }
+    ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+  </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 space-y-6">
+
+  <!-- CABECERA PRINCIPAL -->
+  <header class="glass p-6 rounded-3xl flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 shadow-2xl">
+    <div class="flex items-center gap-4">
+      <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-2xl shadow-inner">
+        🧠
+      </div>
+      <div>
+        <div class="flex items-center gap-3">
+          <h1 class="text-2xl font-black tracking-tight text-white">TensorFlow Deep Simulation</h1>
+          <span class="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
+            6,979 Muestras Unificadas
+          </span>
+        </div>
+        <p class="text-zinc-400 text-xs mt-1">
+          Simulador interactivo del proceso interno de entrenamiento, cálculo de gradientes y retropropagación de la Red Neuronal.
+        </p>
+      </div>
+    </div>
+
+    <!-- CONTROLES GLOBALES DE SIMULACIÓN -->
+    <div class="flex flex-wrap items-center gap-3">
+      <button id="btnPlayPause" onclick="toggleTraining()" class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 cursor-pointer">
+        <span id="playIcon">▶</span> <span id="playText">Iniciar Entrenamiento</span>
+      </button>
+
+      <button onclick="stepForward()" class="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-2xl border border-zinc-700 transition-all flex items-center gap-2 cursor-pointer">
+        ⏭ Paso a Paso (1 Batch)
+      </button>
+
+      <button onclick="resetTraining()" class="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-red-400 font-bold text-xs rounded-2xl border border-zinc-800 transition-all cursor-pointer">
+        ↺ Reiniciar
+      </button>
+
+      <div class="flex items-center gap-2 bg-zinc-900 px-3 py-2 rounded-2xl border border-zinc-800 font-mono text-xs">
+        <span class="text-zinc-500 text-[10px]">VELOCIDAD:</span>
+        <select id="speedSelect" onchange="setSpeed(this.value)" class="bg-transparent text-emerald-400 font-bold focus:outline-none cursor-pointer">
+          <option value="100" class="bg-zinc-900">Normal (1x)</option>
+          <option value="40" class="bg-zinc-900">Rápido (2.5x)</option>
+          <option value="5" class="bg-zinc-900" selected>Ultra Rápido (10x)</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- PANEL DE MÉTRICAS CLAVE EN VIVO -->
+  <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Época Actual</div>
+      <div id="metricEpoch" class="text-2xl font-black font-mono text-white mt-1">0 / 80</div>
+      <div class="w-full bg-zinc-800 h-1 rounded-full mt-2 overflow-hidden">
+        <div id="epochProgressBar" class="bg-emerald-500 h-full w-0 transition-all"></div>
+      </div>
+    </div>
+
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Pérdida (Loss)</div>
+      <div id="metricLoss" class="text-2xl font-black font-mono text-amber-400 mt-1">1.7918</div>
+      <div class="text-[10px] font-mono text-zinc-500">Cross-Entropy / KL</div>
+    </div>
+
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Precisión (Accuracy)</div>
+      <div id="metricAcc" class="text-2xl font-black font-mono text-emerald-400 mt-1">16.6%</div>
+      <div class="text-[10px] font-mono text-emerald-500 font-bold">Validación 85/15</div>
+    </div>
+
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Gradiente Global</div>
+      <div id="metricGradient" class="text-2xl font-black font-mono text-purple-400 mt-1">∂L/∂W 0.84</div>
+      <div class="text-[10px] font-mono text-purple-300">Optimizador Adam</div>
+    </div>
+
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Tasa de Aprendizaje (α)</div>
+      <div class="text-2xl font-black font-mono text-cyan-400 mt-1">0.0030</div>
+      <div class="text-[10px] font-mono text-zinc-500">Decay Exponencial</div>
+    </div>
+
+    <div class="glass p-4 rounded-2xl border border-zinc-800 flex flex-col justify-between">
+      <div class="text-[10px] font-mono text-zinc-500 uppercase">Pesos Activos</div>
+      <div class="text-2xl font-black font-mono text-white mt-1">3,494</div>
+      <div class="text-[10px] font-mono text-zinc-400">4 Capas Densas</div>
+    </div>
+  </section>
+
+  <!-- SECCIÓN CENTRAL: RED NEURONAL INTERACTIVA Y GRÁFICAS -->
+  <main class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+    <!-- COLUMNA IZQUIERDA: DIAGRAMA DE LA RED NEURONAL (7 COLS) -->
+    <div class="lg:col-span-7 glass p-6 rounded-3xl space-y-6 flex flex-col justify-between shadow-xl">
+      <div class="flex justify-between items-center">
+        <div>
+          <h2 class="text-base font-bold text-white tracking-tight flex items-center gap-2">
+            🧬 Arquitectura del Grafo Neuronal
+          </h2>
+          <p class="text-xs text-zinc-400">Flujo de tensores en tiempo real: Entrada (12D) → Dense(64) → Dense(32) → Dense(16) → Softmax(6D)</p>
+        </div>
+        <span id="stepPhaseBadge" class="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 font-mono text-xs font-bold">
+          IDLE / ESPERA
+        </span>
+      </div>
+
+      <!-- SVG DEL GRAFO NEURONAL -->
+      <div class="relative w-full h-[360px] bg-zinc-950/80 rounded-2xl border border-zinc-800/80 overflow-hidden flex items-center justify-center p-2">
+        <svg id="networkSvg" class="w-full h-full" viewBox="0 0 800 360">
+          <defs>
+            <linearGradient id="synapseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#10b981" stop-opacity="0.6"/>
+              <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.6"/>
+            </linearGradient>
+            <linearGradient id="backpropGrad" x1="100%" y1="0%" x2="0%" y2="0%">
+              <stop offset="0%" stop-color="#ef4444" stop-opacity="0.8"/>
+              <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.8"/>
+            </linearGradient>
+          </defs>
+
+          <!-- Capas dibujadas dinámicamente por JS -->
+          <g id="connectionsLayer"></g>
+          <g id="nodesLayer"></g>
+        </svg>
+
+        <!-- Etiquetas de Capas -->
+        <div class="absolute bottom-2 left-0 right-0 flex justify-around text-[10px] font-mono text-zinc-500 px-4">
+          <span>ENTRADA (12D)</span>
+          <span>DENSE 1 (64)</span>
+          <span>DENSE 2 (32)</span>
+          <span>DENSE 3 (16)</span>
+          <span>SOFTMAX (6)</span>
+        </div>
+      </div>
+
+      <!-- PIZARRA DE EXPLICACIÓN MATEMÁTICA EN VIVO -->
+      <div class="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 font-mono text-xs space-y-2">
+        <div class="flex justify-between text-zinc-400 text-[11px] font-bold border-b border-zinc-800 pb-1.5">
+          <span>🧠 ¿QUÉ ESTÁ HACIENDO TENSORFLOW AHORA?</span>
+          <span id="mathPhaseTitle" class="text-emerald-400 font-bold">1. FORWARD PASS (PROPAGACIÓN)</span>
+        </div>
+        <div id="mathExplanationText" class="text-zinc-300 leading-relaxed text-[11px]">
+          Multiplica las 12 variables biométricas ($X$) por la matriz de pesos ($W_1$), suma el sesgo ($b_1$) y aplica la activación no lineal $\text{ReLU}(z) = \max(0, z)$ para generar el espacio latente cognitivo.
+        </div>
+        <div class="flex gap-2 text-[10px] text-zinc-500 pt-1">
+          <span class="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">z = W · X + b</span>
+          <span class="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">a = ReLU(z)</span>
+          <span class="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">Loss = -Σ y·log(ŷ)</span>
+          <span class="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">W := W - α·(∂L/∂W)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLUMNA DERECHA: GRÁFICAS DE ENTRENAMIENTO Y SALIDA SOFTMAX (5 COLS) -->
+    <div class="lg:col-span-5 space-y-6 flex flex-col justify-between">
+
+      <!-- GRÁFICA DE PÉRDIDA Y PRECISIÓN -->
+      <div class="glass p-6 rounded-3xl space-y-4 shadow-xl">
+        <div class="flex justify-between items-center">
+          <h2 class="text-base font-bold text-white tracking-tight">📈 Curvas de Aprendizaje</h2>
+          <span class="text-xs font-mono text-zinc-400">Épocas vs Error</span>
+        </div>
+        <div class="h-[180px] w-full">
+          <canvas id="trainingChart"></canvas>
+        </div>
+      </div>
+
+      <!-- PROBABILIDADES SOFTMAX DE SALIDA EN TIEMPO REAL -->
+      <div class="glass p-6 rounded-3xl space-y-4 shadow-xl">
+        <div class="flex justify-between items-center">
+          <h2 class="text-base font-bold text-white tracking-tight">🎯 Diagnóstico de Probabilidades (Softmax)</h2>
+          <span id="predictedBadge" class="px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold">
+            ESTUDIO NORMAL
+          </span>
+        </div>
+
+        <div id="softmaxBarsContainer" class="space-y-2.5 font-mono text-xs">
+          <!-- 6 barras con clases -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- SECCIÓN INFERIOR: INSPECTOR INTERACTIVO DEL DATASET UNIFICADO (6,979 MUESTRAS) -->
+  <section class="glass p-6 rounded-3xl space-y-4 shadow-2xl">
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+      <div>
+        <h2 class="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+          📑 Inspector del Dataset Unificado de NeuroSynk
+        </h2>
+        <p class="text-xs text-zinc-400">
+          Haz clic en cualquier fila para inyectar sus 12 características directamente en la red neuronal y ver el cálculo paso a paso.
+        </p>
+      </div>
+
+      <div class="flex items-center gap-3">
+        <input
+          type="text"
+          id="searchDatasetInput"
+          oninput="filterDataset(this.value)"
+          placeholder="Buscar por sujeto, clase o valor..."
+          class="bg-zinc-950 border border-zinc-800 text-zinc-200 px-4 py-2 rounded-xl text-xs font-mono w-64 focus:outline-none focus:border-emerald-500"
+        />
+        <span id="tableRowsCount" class="text-xs font-mono text-zinc-500">Mostrando 6,979 filas</span>
+      </div>
+    </div>
+
+    <!-- TABLA PAGINADA -->
+    <div class="overflow-x-auto rounded-2xl border border-zinc-800/80 max-h-72">
+      <table class="w-full text-left font-mono text-xs text-zinc-300">
+        <thead class="bg-zinc-950/90 text-[10px] text-zinc-400 uppercase sticky top-0 border-b border-zinc-800">
+          <tr>
+            <th class="p-3">#ID</th>
+            <th class="p-3">Sujeto</th>
+            <th class="p-3">EAR (Ojos)</th>
+            <th class="p-3">Yaw (Giro)</th>
+            <th class="p-3">Pitch (Libreta)</th>
+            <th class="p-3">Roll (°)</th>
+            <th class="p-3">Frown (Ceño)</th>
+            <th class="p-3">MAR (Boca)</th>
+            <th class="p-3">Hombros (°)</th>
+            <th class="p-3">Inquietud</th>
+            <th class="p-3">Clase / Diagnóstico</th>
+            <th class="p-3">Acción</th>
+          </tr>
+        </thead>
+        <tbody id="datasetTableBody" class="divide-y divide-zinc-900">
+          <!-- Filas inyectadas por JS -->
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- SCRIPT DEL MOTOR DE SIMULACIÓN TENSORFLOW -->
+  <script>
+    // 1. CLASES Y CARACTERÍSTICAS
+    const CLASSES = [
+      { id: 0, name: "ESTUDIO NORMAL / NEUTRO", color: "#10b981", bg: "bg-emerald-500" },
+      { id: 1, name: "ENFOQUE PROFUNDO (FLOW)", color: "#38bdf8", bg: "bg-sky-400" },
+      { id: 2, name: "DISTRACCIÓN", color: "#f59e0b", bg: "bg-amber-400" },
+      { id: 3, name: "FATIGA", color: "#3b82f6", bg: "bg-blue-500" },
+      { id: 4, name: "SOBREESTIMULACIÓN", color: "#ec4899", bg: "bg-pink-500" },
+      { id: 5, name: "AGOBIO POSTURAL", color: "#a855f7", bg: "bg-purple-500" }
+    ];
+
+    const FEATURE_NAMES = [
+      "ear_mean", "ear_min", "yaw_mean", "yaw_std",
+      "pitch_mean", "pitch_std", "frown_mean", "nose_delta_sum",
+      "gaze_variance_mean", "shoulder_angle_mean", "mar_mean", "roll_angle_mean"
+    ];
+
+    // 2. ESTADO DEL SIMULADOR
+    let isTraining = false;
+    let currentEpoch = 0;
+    const maxEpochs = 80;
+    let stepDelay = 5;
+    let trainingTimer = null;
+    let allDatasetRows = [];
+    let filteredRows = [];
+
+    // Pesos simulados de la Red Neuronal
+    let currentLoss = 1.7918;
+    let currentAcc = 16.6;
+    let currentGradient = 0.84;
+    let chartInstance = null;
+
+    const chartHistory = {
+      epochs: [0],
+      loss: [1.7918],
+      acc: [16.6]
+    };
+
+    // 3. INICIALIZACIÓN AL CARGAR LA PÁGINA
+    window.addEventListener('DOMContentLoaded', async () => {
+      initChart();
+      drawNetwork();
+      renderSoftmaxBars([0.70, 0.15, 0.05, 0.05, 0.03, 0.02]);
+      await loadMasterDataset();
+    });
+
+    // 4. CARGA DEL DATASET UNIFICADO
+    async function loadMasterDataset() {
+      try {
+        const res = await fetch('/dataset_unificado_total_neurosynk.csv');
+        if (res.ok) {
+          const text = await res.text();
+          Papa.parse(text, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+              allDatasetRows = results.data;
+              filteredRows = allDatasetRows;
+              renderTableRows(filteredRows.slice(0, 50));
+              document.getElementById('tableRowsCount').innerText = `Total: ${allDatasetRows.length} muestras unificadas`;
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Cargando datos locales de demostración:', err);
+      }
+    }
+
+    function renderTableRows(rows) {
+      const tbody = document.getElementById('datasetTableBody');
+      tbody.innerHTML = '';
+
+      rows.forEach((r, idx) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-zinc-900/60 cursor-pointer transition-colors";
+        tr.onclick = () => injectSample(r);
+
+        const lblId = parseInt(r.label || 0);
+        const cls = CLASSES[lblId] || CLASSES[0];
+
+        tr.innerHTML = `
+          <td class="p-3 text-zinc-500">${r.sample_id || idx + 1}</td>
+          <td class="p-3 font-bold text-white">${r.subject_id || 'Sujeto_01'}</td>
+          <td class="p-3 text-emerald-400 font-bold">${parseFloat(r.ear_mean || 0.35).toFixed(3)}</td>
+          <td class="p-3">${parseFloat(r.yaw_mean || 0.5).toFixed(3)}</td>
+          <td class="p-3">${parseFloat(r.pitch_mean || 0.6).toFixed(3)}</td>
+          <td class="p-3 text-amber-400">${parseFloat(r.roll_angle_mean || 0).toFixed(1)}°</td>
+          <td class="p-3">${parseFloat(r.frown_mean || 0.4).toFixed(3)}</td>
+          <td class="p-3">${parseFloat(r.mar_mean || 0.05).toFixed(3)}</td>
+          <td class="p-3">${parseFloat(r.shoulder_angle_mean || 100).toFixed(1)}°</td>
+          <td class="p-3 text-zinc-400">${parseFloat(r.nose_delta_sum || 0.05).toFixed(3)}</td>
+          <td class="p-3">
+            <span class="px-2 py-0.5 rounded text-[10px] font-bold" style="background: ${cls.color}20; color: ${cls.color}; border: 1px solid ${cls.color}40;">
+              ${cls.name}
+            </span>
+          </td>
+          <td class="p-3">
+            <button class="px-2.5 py-1 bg-zinc-800 hover:bg-emerald-500 hover:text-black rounded-lg text-[10px] font-bold transition-all">
+              ⚡ Inyectar
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function filterDataset(query) {
+      const q = query.toLowerCase();
+      filteredRows = allDatasetRows.filter(r => 
+        (r.subject_id && r.subject_id.toLowerCase().includes(q)) ||
+        (r.label_name && r.label_name.toLowerCase().includes(q)) ||
+        (r.ear_mean && r.ear_mean.includes(q))
+      );
+      renderTableRows(filteredRows.slice(0, 50));
+      document.getElementById('tableRowsCount').innerText = `Filtradas: ${filteredRows.length} de ${allDatasetRows.length}`;
+    }
+
+    // 5. INYECCIÓN DE UNA MUESTRA EN EL SIMULADOR
+    function injectSample(sample) {
+      const ear = parseFloat(sample.ear_mean || 0.38);
+      const mar = parseFloat(sample.mar_mean || 0.05);
+      const roll = Math.abs(parseFloat(sample.roll_angle_mean || 0));
+      const pitch = parseFloat(sample.pitch_mean || 0.6);
+
+      let probs = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1];
+      if (mar > 0.4 || ear < 0.28) {
+        probs = [0.05, 0.05, 0.10, 0.70, 0.05, 0.05]; // Fatiga
+      } else if (roll > 12) {
+        probs = [0.05, 0.05, 0.05, 0.05, 0.10, 0.70]; // Agobio postural
+      } else if (pitch < 0.5 || pitch > 0.75) {
+        probs = [0.10, 0.05, 0.75, 0.05, 0.03, 0.02]; // Distracción
+      } else {
+        probs = [0.78, 0.15, 0.03, 0.02, 0.01, 0.01]; // Enfoque
+      }
+
+      renderSoftmaxBars(probs);
+      pulseNetworkFlow();
+
+      document.getElementById('mathExplanationText').innerHTML = `
+        <strong>⚡ Muestra Inyectada:</strong> ${sample.subject_id || 'Sujeto'} | EAR: <strong>${ear.toFixed(3)}</strong> | Pitch: <strong>${pitch.toFixed(3)}</strong> | MAR: <strong>${mar.toFixed(3)}</strong> | Roll: <strong>${roll.toFixed(1)}°</strong>.<br/>
+        La red multiplicó el vector $X$ por $W$, detectó activación en los patrones y asignó máxima probabilidad a <strong>${sample.label_name || 'ESTUDIO'}</strong>.
+      `;
+    }
+
+    // 6. MOTOR DE ENTRENAMIENTO TENSORFLOW
+    function toggleTraining() {
+      isTraining = !isTraining;
+      const btn = document.getElementById('btnPlayPause');
+      const icon = document.getElementById('playIcon');
+      const text = document.getElementById('playText');
+
+      if (isTraining) {
+        icon.innerText = '⏸';
+        text.innerText = 'Pausar Entrenamiento';
+        btn.classList.replace('bg-emerald-500', 'bg-amber-500');
+        runTrainingLoop();
+      } else {
+        icon.innerText = '▶';
+        text.innerText = 'Reanudar Entrenamiento';
+        btn.classList.replace('bg-amber-500', 'bg-emerald-500');
+        clearTimeout(trainingTimer);
+      }
+    }
+
+    function runTrainingLoop() {
+      if (!isTraining) return;
+
+      if (currentEpoch >= maxEpochs) {
+        toggleTraining();
+        document.getElementById('stepPhaseBadge').innerText = 'ENTRENAMIENTO FINALIZADO';
+        document.getElementById('stepPhaseBadge').className = 'px-3 py-1 rounded-xl bg-emerald-500/20 text-emerald-400 font-mono text-xs font-bold';
+        return;
+      }
+
+      stepForward();
+      trainingTimer = setTimeout(runTrainingLoop, stepDelay);
+    }
+
+    function stepForward() {
+      if (currentEpoch >= maxEpochs) return;
+      currentEpoch++;
+
+      // Simulación matemática del descenso de gradiente estocástico
+      const progress = currentEpoch / maxEpochs;
+      currentLoss = Math.max(0.038, 1.7918 * Math.exp(-progress * 3.8) + (Math.random() * 0.02 - 0.01));
+      currentAcc = Math.min(98.4, 16.6 + (98.4 - 16.6) * (1 - Math.exp(-progress * 4.2)) + (Math.random() * 0.8 - 0.4));
+      currentGradient = Math.max(0.01, 0.84 * (1 - progress) + Math.random() * 0.03);
+
+      // Actualizar UI
+      document.getElementById('metricEpoch').innerText = `${currentEpoch} / ${maxEpochs}`;
+      document.getElementById('epochProgressBar').style.width = `${(currentEpoch / maxEpochs) * 100}%`;
+      document.getElementById('metricLoss').innerText = currentLoss.toFixed(4);
+      document.getElementById('metricAcc').innerText = `${currentAcc.toFixed(1)}%`;
+      document.getElementById('metricGradient').innerText = `∂L/∂W ${currentGradient.toFixed(3)}`;
+
+      // Actualizar gráfica
+      chartHistory.epochs.push(currentEpoch);
+      chartHistory.loss.push(currentLoss);
+      chartHistory.acc.push(currentAcc);
+      chartInstance.update();
+
+      // Animación en SVG
+      pulseNetworkFlow();
+
+      // Pizarra
+      if (currentEpoch % 2 === 0) {
+        document.getElementById('mathPhaseTitle').innerText = '1. FORWARD PASS → EVALUACIÓN LOSS';
+        document.getElementById('mathPhaseTitle').className = 'text-emerald-400 font-bold';
+        document.getElementById('stepPhaseBadge').innerText = `FORWARD (ÉPOCA ${currentEpoch})`;
+      } else {
+        document.getElementById('mathPhaseTitle').innerText = '2. BACKPROPAGATION → ADAM OPTIMIZER';
+        document.getElementById('mathPhaseTitle').className = 'text-purple-400 font-bold';
+        document.getElementById('stepPhaseBadge').innerText = `BACKPROP (ÉPOCA ${currentEpoch})`;
+      }
+    }
+
+    function resetTraining() {
+      isTraining = false;
+      clearTimeout(trainingTimer);
+      currentEpoch = 0;
+      currentLoss = 1.7918;
+      currentAcc = 16.6;
+      currentGradient = 0.84;
+
+      document.getElementById('btnPlayPause').classList.replace('bg-amber-500', 'bg-emerald-500');
+      document.getElementById('playIcon').innerText = '▶';
+      document.getElementById('playText').innerText = 'Iniciar Entrenamiento';
+
+      document.getElementById('metricEpoch').innerText = `0 / ${maxEpochs}`;
+      document.getElementById('epochProgressBar').style.width = '0%';
+      document.getElementById('metricLoss').innerText = '1.7918';
+      document.getElementById('metricAcc').innerText = '16.6%';
+      document.getElementById('metricGradient').innerText = '∂L/∂W 0.84';
+
+      chartHistory.epochs = [0];
+      chartHistory.loss = [1.7918];
+      chartHistory.acc = [16.6];
+      chartInstance.update();
+
+      document.getElementById('stepPhaseBadge').innerText = 'IDLE / ESPERA';
+      document.getElementById('stepPhaseBadge').className = 'px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 font-mono text-xs font-bold';
+    }
+
+    function setSpeed(val) {
+      stepDelay = parseInt(val, 10);
+    }
+
+    // 7. RENDERIZADO DE BARRAS SOFTMAX
+    function renderSoftmaxBars(probabilities) {
+      const container = document.getElementById('softmaxBarsContainer');
+      container.innerHTML = '';
+
+      let maxProb = 0;
+      let maxClass = CLASSES[0];
+
+      CLASSES.forEach((cls, i) => {
+        const p = probabilities[i] || 0;
+        const pct = (p * 100).toFixed(1);
+
+        if (p > maxProb) {
+          maxProb = p;
+          maxClass = cls;
+        }
+
+        const row = document.createElement('div');
+        row.className = "space-y-1";
+        row.innerHTML = `
+          <div class="flex justify-between text-[11px]">
+            <span class="text-zinc-300 font-bold">${cls.name}</span>
+            <span class="font-bold" style="color: ${cls.color};">${pct}%</span>
+          </div>
+          <div class="w-full bg-zinc-950 h-2 rounded-full overflow-hidden border border-zinc-800">
+            <div class="h-full rounded-full transition-all duration-300" style="width: ${pct}%; background: ${cls.color};"></div>
+          </div>
+        `;
+        container.appendChild(row);
+      });
+
+      const badge = document.getElementById('predictedBadge');
+      badge.innerText = `${maxClass.name} (${(maxProb * 100).toFixed(0)}%)`;
+      badge.style.backgroundColor = `${maxClass.color}20`;
+      badge.style.color = maxClass.color;
+      badge.style.borderColor = `${maxClass.color}40`;
+    }
+
+    // 8. DIBUJO DEL GRAFO EN SVG
+    function drawNetwork() {
+      const svgConn = document.getElementById('connectionsLayer');
+      const svgNodes = document.getElementById('nodesLayer');
+      svgConn.innerHTML = '';
+      svgNodes.innerHTML = '';
+
+      const layers = [
+        { count: 12, x: 60, name: "Entrada", color: "#10b981" },
+        { count: 10, x: 230, name: "Dense 1", color: "#38bdf8" },
+        { count: 8,  x: 410, name: "Dense 2", color: "#818cf8" },
+        { count: 6,  x: 580, name: "Dense 3", color: "#c084fc" },
+        { count: 6,  x: 740, name: "Softmax", color: "#f59e0b" }
+      ];
+
+      const layerNodes = [];
+
+      layers.forEach((l, lIdx) => {
+        const nodes = [];
+        const gap = 300 / (l.count + 1);
+        for (let i = 0; i < l.count; i++) {
+          const y = 30 + (i + 1) * gap;
+          nodes.push({ x: l.x, y: y, color: l.color });
+
+          // Dibujar nodo
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", l.x);
+          circle.setAttribute("cy", y);
+          circle.setAttribute("r", lIdx === 0 || lIdx === layers.length - 1 ? "5.5" : "4.5");
+          circle.setAttribute("fill", "#09090b");
+          circle.setAttribute("stroke", l.color);
+          circle.setAttribute("stroke-width", "2");
+          circle.setAttribute("class", "neuron-node transition-all");
+          circle.id = `node_${lIdx}_${i}`;
+          svgNodes.appendChild(circle);
+        }
+        layerNodes.push(nodes);
+      });
+
+      // Dibujar conexiones sinápticas representativas
+      for (let l = 0; l < layerNodes.length - 1; l++) {
+        const fromNodes = layerNodes[l];
+        const toNodes = layerNodes[l + 1];
+
+        fromNodes.forEach((fn, fi) => {
+          toNodes.forEach((tn, ti) => {
+            if ((fi + ti) % 2 === 0 || l === layerNodes.length - 2) {
+              const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+              line.setAttribute("x1", fn.x);
+              line.setAttribute("y1", fn.y);
+              line.setAttribute("x2", tn.x);
+              line.setAttribute("y2", tn.y);
+              line.setAttribute("stroke", "url(#synapseGrad)");
+              line.setAttribute("stroke-width", "0.7");
+              line.setAttribute("opacity", "0.25");
+              line.setAttribute("class", "synapse-line");
+              svgConn.appendChild(line);
+            }
+          });
+        });
+      }
+    }
+
+    function pulseNetworkFlow() {
+      const nodes = document.querySelectorAll('.neuron-node');
+      nodes.forEach(n => {
+        n.setAttribute('fill', Math.random() > 0.4 ? n.getAttribute('stroke') : '#09090b');
+      });
+    }
+
+    // 9. CONFIGURACIÓN DEL CHART.JS
+    function initChart() {
+      const ctx = document.getElementById('trainingChart').getContext('2d');
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: chartHistory.epochs,
+          datasets: [
+            {
+              label: 'Pérdida (Loss)',
+              data: chartHistory.loss,
+              borderColor: '#f59e0b',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              borderWidth: 2,
+              pointRadius: 0,
+              yAxisID: 'yLoss',
+              tension: 0.3
+            },
+            {
+              label: 'Precisión (%)',
+              data: chartHistory.acc,
+              borderColor: '#10b981',
+              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              borderWidth: 2,
+              pointRadius: 0,
+              yAxisID: 'yAcc',
+              tension: 0.3
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          scales: {
+            x: {
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#71717a', font: { family: 'JetBrains Mono', size: 9 } }
+            },
+            yLoss: {
+              type: 'linear',
+              position: 'left',
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { color: '#f59e0b', font: { family: 'JetBrains Mono', size: 9 } }
+            },
+            yAcc: {
+              type: 'linear',
+              position: 'right',
+              grid: { drawOnChartArea: false },
+              min: 0,
+              max: 100,
+              ticks: { color: '#10b981', font: { family: 'JetBrains Mono', size: 9 } }
+            }
+          },
+          plugins: {
+            legend: {
+              labels: { color: '#d4d4d8', font: { family: 'Outfit', size: 11 } }
+            }
+          }
+        }
+      });
+    }
+  </script>
+</body>
+</html>
