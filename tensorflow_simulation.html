@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,62 +10,116 @@
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&family=JetBrains+Mono:wght@400;700&display=swap"
+    rel="stylesheet">
   <style>
-    body { font-family: 'Outfit', sans-serif; background-color: #09090b; color: #f4f4f5; }
-    .font-mono { font-family: 'JetBrains Mono', monospace; }
-    .glass { background: rgba(24, 24, 27, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
-    .glass-active { border-color: rgba(16, 185, 129, 0.4); box-shadow: 0 0 25px rgba(16, 185, 129, 0.15); }
-    @keyframes pulse-glow {
-      0%, 100% { opacity: 0.3; transform: scale(1); }
-      50% { opacity: 0.8; transform: scale(1.08); }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: #09090b;
+      color: #f4f4f5;
     }
-    .synapse-active { animation: pulse-glow 1.5s infinite ease-in-out; }
+
+    .font-mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .glass {
+      background: rgba(24, 24, 27, 0.85);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .glass-active {
+      border-color: rgba(16, 185, 129, 0.4);
+      box-shadow: 0 0 25px rgba(16, 185, 129, 0.15);
+    }
+
+    @keyframes pulse-glow {
+
+      0%,
+      100% {
+        opacity: 0.3;
+        transform: scale(1);
+      }
+
+      50% {
+        opacity: 0.8;
+        transform: scale(1.08);
+      }
+    }
+
+    .synapse-active {
+      animation: pulse-glow 1.5s infinite ease-in-out;
+    }
+
     /* Custom scrollbar */
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #09090b; }
-    ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #09090b;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #27272a;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f46;
+    }
   </style>
 </head>
+
 <body class="min-h-screen p-4 md:p-8 space-y-6">
 
   <!-- CABECERA PRINCIPAL -->
-  <header class="glass p-6 rounded-3xl flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 shadow-2xl">
+  <header
+    class="glass p-6 rounded-3xl flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6 shadow-2xl">
     <div class="flex items-center gap-4">
-      <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-2xl shadow-inner">
+      <div
+        class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500/20 to-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-2xl shadow-inner">
         🧠
       </div>
       <div>
         <div class="flex items-center gap-3">
           <h1 class="text-2xl font-black tracking-tight text-white">TensorFlow Deep Simulation</h1>
-          <span class="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
+          <span
+            class="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold">
             6,979 Muestras Unificadas
           </span>
         </div>
         <p class="text-zinc-400 text-xs mt-1">
-          Simulador interactivo del proceso interno de entrenamiento, cálculo de gradientes y retropropagación de la Red Neuronal.
+          Simulador interactivo del proceso interno de entrenamiento, cálculo de gradientes y retropropagación de la Red
+          Neuronal.
         </p>
       </div>
     </div>
 
     <!-- CONTROLES GLOBALES DE SIMULACIÓN -->
     <div class="flex flex-wrap items-center gap-3">
-      <button id="btnPlayPause" onclick="toggleTraining()" class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 cursor-pointer">
+      <button id="btnPlayPause" onclick="toggleTraining()"
+        class="px-6 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2 cursor-pointer">
         <span id="playIcon">▶</span> <span id="playText">Iniciar Entrenamiento</span>
       </button>
 
-      <button onclick="stepForward()" class="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-2xl border border-zinc-700 transition-all flex items-center gap-2 cursor-pointer">
+      <button onclick="stepForward()"
+        class="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-bold text-xs rounded-2xl border border-zinc-700 transition-all flex items-center gap-2 cursor-pointer">
         ⏭ Paso a Paso (1 Batch)
       </button>
 
-      <button onclick="resetTraining()" class="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-red-400 font-bold text-xs rounded-2xl border border-zinc-800 transition-all cursor-pointer">
+      <button onclick="resetTraining()"
+        class="px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-red-400 font-bold text-xs rounded-2xl border border-zinc-800 transition-all cursor-pointer">
         ↺ Reiniciar
       </button>
 
       <div class="flex items-center gap-2 bg-zinc-900 px-3 py-2 rounded-2xl border border-zinc-800 font-mono text-xs">
         <span class="text-zinc-500 text-[10px]">VELOCIDAD:</span>
-        <select id="speedSelect" onchange="setSpeed(this.value)" class="bg-transparent text-emerald-400 font-bold focus:outline-none cursor-pointer">
+        <select id="speedSelect" onchange="setSpeed(this.value)"
+          class="bg-transparent text-emerald-400 font-bold focus:outline-none cursor-pointer">
           <option value="100" class="bg-zinc-900">Normal (1x)</option>
           <option value="40" class="bg-zinc-900">Rápido (2.5x)</option>
           <option value="5" class="bg-zinc-900" selected>Ultra Rápido (10x)</option>
@@ -124,24 +179,27 @@
           <h2 class="text-base font-bold text-white tracking-tight flex items-center gap-2">
             🧬 Arquitectura del Grafo Neuronal
           </h2>
-          <p class="text-xs text-zinc-400">Flujo de tensores en tiempo real: Entrada (12D) → Dense(64) → Dense(32) → Dense(16) → Softmax(6D)</p>
+          <p class="text-xs text-zinc-400">Flujo de tensores en tiempo real: Entrada (12D) → Dense(64) → Dense(32) →
+            Dense(16) → Softmax(6D)</p>
         </div>
-        <span id="stepPhaseBadge" class="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 font-mono text-xs font-bold">
+        <span id="stepPhaseBadge"
+          class="px-3 py-1 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-300 font-mono text-xs font-bold">
           IDLE / ESPERA
         </span>
       </div>
 
       <!-- SVG DEL GRAFO NEURONAL -->
-      <div class="relative w-full h-[360px] bg-zinc-950/80 rounded-2xl border border-zinc-800/80 overflow-hidden flex items-center justify-center p-2">
+      <div
+        class="relative w-full h-[360px] bg-zinc-950/80 rounded-2xl border border-zinc-800/80 overflow-hidden flex items-center justify-center p-2">
         <svg id="networkSvg" class="w-full h-full" viewBox="0 0 800 360">
           <defs>
             <linearGradient id="synapseGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-              <stop offset="0%" stop-color="#10b981" stop-opacity="0.6"/>
-              <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.6"/>
+              <stop offset="0%" stop-color="#10b981" stop-opacity="0.6" />
+              <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.6" />
             </linearGradient>
             <linearGradient id="backpropGrad" x1="100%" y1="0%" x2="0%" y2="0%">
-              <stop offset="0%" stop-color="#ef4444" stop-opacity="0.8"/>
-              <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.8"/>
+              <stop offset="0%" stop-color="#ef4444" stop-opacity="0.8" />
+              <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.8" />
             </linearGradient>
           </defs>
 
@@ -167,7 +225,8 @@
           <span id="mathPhaseTitle" class="text-emerald-400 font-bold">1. FORWARD PASS (PROPAGACIÓN)</span>
         </div>
         <div id="mathExplanationText" class="text-zinc-300 leading-relaxed text-[11px]">
-          Multiplica las 12 variables biométricas ($X$) por la matriz de pesos ($W_1$), suma el sesgo ($b_1$) y aplica la activación no lineal $\text{ReLU}(z) = \max(0, z)$ para generar el espacio latente cognitivo.
+          Multiplica las 12 variables biométricas ($X$) por la matriz de pesos ($W_1$), suma el sesgo ($b_1$) y aplica
+          la activación no lineal $\text{ReLU}(z) = \max(0, z)$ para generar el espacio latente cognitivo.
         </div>
         <div class="flex gap-2 text-[10px] text-zinc-500 pt-1">
           <span class="bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">z = W · X + b</span>
@@ -196,7 +255,8 @@
       <div class="glass p-6 rounded-3xl space-y-4 shadow-xl">
         <div class="flex justify-between items-center">
           <h2 class="text-base font-bold text-white tracking-tight">🎯 Diagnóstico de Probabilidades (Softmax)</h2>
-          <span id="predictedBadge" class="px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold">
+          <span id="predictedBadge"
+            class="px-2.5 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 text-xs font-mono font-bold">
             ESTUDIO NORMAL
           </span>
         </div>
@@ -216,18 +276,15 @@
           📑 Inspector del Dataset Unificado de NeuroSynk
         </h2>
         <p class="text-xs text-zinc-400">
-          Haz clic en cualquier fila para inyectar sus 12 características directamente en la red neuronal y ver el cálculo paso a paso.
+          Haz clic en cualquier fila para inyectar sus 12 características directamente en la red neuronal y ver el
+          cálculo paso a paso.
         </p>
       </div>
 
       <div class="flex items-center gap-3">
-        <input
-          type="text"
-          id="searchDatasetInput"
-          oninput="filterDataset(this.value)"
+        <input type="text" id="searchDatasetInput" oninput="filterDataset(this.value)"
           placeholder="Buscar por sujeto, clase o valor..."
-          class="bg-zinc-950 border border-zinc-800 text-zinc-200 px-4 py-2 rounded-xl text-xs font-mono w-64 focus:outline-none focus:border-emerald-500"
-        />
+          class="bg-zinc-950 border border-zinc-800 text-zinc-200 px-4 py-2 rounded-xl text-xs font-mono w-64 focus:outline-none focus:border-emerald-500" />
         <span id="tableRowsCount" class="text-xs font-mono text-zinc-500">Mostrando 6,979 filas</span>
       </div>
     </div>
@@ -367,7 +424,7 @@
 
     function filterDataset(query) {
       const q = query.toLowerCase();
-      filteredRows = allDatasetRows.filter(r => 
+      filteredRows = allDatasetRows.filter(r =>
         (r.subject_id && r.subject_id.toLowerCase().includes(q)) ||
         (r.label_name && r.label_name.toLowerCase().includes(q)) ||
         (r.ear_mean && r.ear_mean.includes(q))
@@ -554,9 +611,9 @@
       const layers = [
         { count: 12, x: 60, name: "Entrada", color: "#10b981" },
         { count: 10, x: 230, name: "Dense 1", color: "#38bdf8" },
-        { count: 8,  x: 410, name: "Dense 2", color: "#818cf8" },
-        { count: 6,  x: 580, name: "Dense 3", color: "#c084fc" },
-        { count: 6,  x: 740, name: "Softmax", color: "#f59e0b" }
+        { count: 8, x: 410, name: "Dense 2", color: "#818cf8" },
+        { count: 6, x: 580, name: "Dense 3", color: "#c084fc" },
+        { count: 6, x: 740, name: "Softmax", color: "#f59e0b" }
       ];
 
       const layerNodes = [];
@@ -678,4 +735,5 @@
     }
   </script>
 </body>
+
 </html>

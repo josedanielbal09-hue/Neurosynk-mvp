@@ -36,10 +36,14 @@ async function trainAndExport() {
   console.log("🧠 ENTRENAMIENTO DE RED NEURONAL LOCAL TENSORFLOW.JS (12 FEATURES)");
   console.log("=================================================================");
 
-  const datasetPath = path.resolve(__dirname, '..', '..', 'dataset_ventanas_aumentado.csv');
+  let datasetPath = path.resolve(__dirname, '..', '..', 'dataset_unificado_total_neurosynk.csv');
+  if (!fs.existsSync(datasetPath)) {
+    datasetPath = path.resolve(__dirname, '..', '..', 'dataset_ventanas_aumentado.csv');
+  }
   if (!fs.existsSync(datasetPath)) {
     throw new Error(`No se encontró el dataset en ${datasetPath}`);
   }
+
 
   const csvContent = fs.readFileSync(datasetPath, 'utf-8');
   const lines = csvContent.trim().split('\n');
