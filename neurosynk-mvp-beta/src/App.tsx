@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, EyeOff, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck, Terminal, LayoutGrid, FileSpreadsheet } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { loadNeuroSynkBrain, evaluateAIBiometrics, AIPredictionResult, episodicMemory } from './services/aiInference';
 import { aiClient } from './api/aiClient';
 import { AIInferenceResponse } from './types/aiContracts';
 import { sessionTelemetry } from './services/sessionTelemetry';
 import { TelemetryDrawer } from './components/TelemetryDrawer';
-import { CsvTableViewer } from './components/CsvTableViewer';
-
 
 declare global {
   interface Window {
@@ -248,10 +246,8 @@ export default function App() {
   }, []);
 
   const [appStage, setAppStage] = useState<'LOGIN' | 'BRIEFING' | 'FOCUS'>('LOGIN');
-  const [activeView, setActiveView] = useState<'FULL' | 'CLEAN_STUDY' | 'BIOMETRICS_HUD' | 'DATASET_EXPLORER'>('FULL');
   const [isTelemetryOpen, setIsTelemetryOpen] = useState<boolean>(false);
   const [briefingMsgs, setBriefingMsgs] = useState<{ role: string, content: string }[]>([]);
-
   const [briefingInput, setBriefingInput] = useState('');
 
   const [workMode, setWorkMode] = useState<'pantalla' | 'lectura' | 'flexible'>('pantalla');
@@ -968,35 +964,26 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         }
 
         // Control Directo del Agente Autónomo sobre las Métricas de Enfoque y Carga
-        const pNeutro = aiResult.probabilities[0] || 0;
-        const pFlow = aiResult.probabilities[1] || 0;
-        const pDistr = aiResult.probabilities[2] || 0;
-        const pFatiga = aiResult.probabilities[3] || 0;
-        const pSobre = aiResult.probabilities[4] || 0;
-        const pAgobio = aiResult.probabilities[5] || 0;
+        const pEnfoque = aiResult.probabilities[0] || 0;
+        const pDistr = aiResult.probabilities[1] || 0;
+        const pFatiga = aiResult.probabilities[2] || 0;
+        const pSobre = aiResult.probabilities[3] || 0;
+        const pAgobio = aiResult.probabilities[4] || 0;
 
         // Barra Verde (C.L.A.P. Focus Score) y Barra Roja (Carga Cognitiva) con Suavizado Exponencial Orgánico:
         const targetFocus = aiResult.focusScore;
         const targetLoad = aiResult.stressLevel;
 
-        metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.85 + targetFocus * 0.15));
-        metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.85 + targetLoad * 0.15));
+        metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.88 + targetFocus * 0.12));
+        metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.88 + targetLoad * 0.12));
 
-        // Emociones de la Mascota según el Estado Cognitivo de la Red Neuronal
-        if (aiResult.classIndex === 1) {
-          setMascotExpression('happy'); // Flow Profundo
-        } else if (aiResult.classIndex === 0) {
-          setMascotExpression('happy'); // Estudio Normal
-        } else if (aiResult.classIndex === 2) {
-          setMascotExpression('blink'); // Distracción
-        } else if (aiResult.classIndex === 3) {
-          setMascotExpression('sleepy'); // Fatiga
-        } else if (aiResult.classIndex === 4 || aiResult.classIndex === 5) {
-          setMascotExpression('sad'); // Sobreestimulación / Agobio
+        if (aiResult.classIndex === 0) {
+          setMascotExpression('happy');
+        } else if (aiResult.classIndex === 2 || aiResult.classIndex === 4) {
+          setMascotExpression('blink');
         } else {
           setMascotExpression('normal');
         }
-
 
         // Registrar Telemetría Continua para Diagnóstico en Vivo (Caja Negra)
         sessionTelemetry.recordFrame(
@@ -1446,448 +1433,367 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
   }
 
   return (
-    <div className="min-h-screen lg:h-screen lg:overflow-hidden bg-zinc-950 text-zinc-300 font-sans p-3 md:p-6 flex flex-col gap-4">
+    <div className="lg:h-screen lg:overflow-hidden bg-zinc-950 text-zinc-300 font-sans p-4 xl:p-8 flex flex-col lg:flex-row gap-6 items-stretch">
 
-      {/* TOP UNIFIED VIEW NAVIGATION BAR */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-zinc-900/90 border border-zinc-800 px-5 py-2.5 rounded-2xl backdrop-blur-xl shadow-xl shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center">
-            <BrainCircuit className="w-4 h-4 text-emerald-400" />
+      {/* LEFT PANEL: VIDEO, BIOMETRICS & CHAT */}
+      <div className="flex-1 w-full max-w-5xl flex flex-col gap-6 min-h-0">
+
+        {/* HUD Bars with TensorFlow.js Neural AI */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-2">
+              <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
+                <Target className="w-4 h-4 text-emerald-500" /> ENFOQUE C.L.A.P.
+              </span>
+              <span className="font-mono text-xs font-bold text-emerald-400">
+                {aiPrediction ? `${aiPrediction.focusScore}%` : '100%'}
+              </span>
+            </div>
+            <div className="h-2.5 w-full bg-zinc-950 rounded-full overflow-hidden shadow-inner flex items-center mb-2">
+              <div
+                ref={focusRef}
+                className="h-full bg-emerald-500 w-full rounded-full transition-[width] duration-300 ease-out shadow-[0_0_15px_rgba(16,185,129,0.6)]"
+              />
+            </div>
+            <div className="text-[10px] font-mono text-zinc-400 truncate">
+              {aiPrediction ? aiPrediction.statusMessage : 'Fijación ocular y atención óptima'}
+            </div>
           </div>
-          <div>
-            <h1 className="text-sm font-bold text-white tracking-wide">NeuroSynk AI Core</h1>
-            <p className="text-[10px] font-mono text-zinc-500">Sistema Cognitivo Dual • Vercel Ready</p>
+
+          <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-2">
+              <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
+                <Activity className="w-4 h-4 text-rose-500" /> CARGA COGNITIVA & FATIGA
+              </span>
+              <span className="font-mono text-xs font-bold text-rose-400">
+                {aiPrediction ? `${aiPrediction.stressLevel}%` : '0%'}
+              </span>
+            </div>
+            <div className="h-2.5 w-full bg-zinc-950 rounded-full overflow-hidden shadow-inner flex items-center mb-2">
+              <div
+                ref={fatigueRef}
+                className="h-full bg-rose-500 w-0 rounded-full transition-[width] duration-300 ease-out shadow-[0_0_15px_rgba(244,63,94,0.6)]"
+              />
+            </div>
+            <div className="text-[10px] font-mono text-zinc-400 truncate">
+              {aiPrediction && aiPrediction.stressLevel > 50 ? '⚠️ Tensión o fatiga acumulada' : 'Nivel de estrés bajo y despejado'}
+            </div>
           </div>
-        </div>
 
-        {/* 4 Switcher Tabs */}
-        <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs font-mono">
-          <button
-            onClick={() => setActiveView('FULL')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeView === 'FULL' ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <LayoutGrid className="w-3.5 h-3.5" /> Modo Híbrido
-          </button>
+          <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
+            <div className="flex justify-between items-center mb-1.5">
+              <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
+                <BrainCircuit className="w-4 h-4 text-cyan-400" /> RED NEURONAL LOCAL
+              </span>
+              <span className="font-mono text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold uppercase tracking-wider">
+                TF.js 95.7% Acc
+              </span>
+            </div>
 
-          <button
-            onClick={() => setActiveView('CLEAN_STUDY')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeView === 'CLEAN_STUDY' ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <EyeOff className="w-3.5 h-3.5" /> Estudio Limpio (Sin Cámara)
-          </button>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-bold font-mono text-white tracking-wide">
+                {aiPrediction ? aiPrediction.className : 'ENFOQUE'}
+              </span>
+              <span className="text-xs font-mono text-zinc-400 font-semibold">
+                {aiPrediction ? `${(aiPrediction.confidence * 100).toFixed(0)}% Conf.` : '100%'}
+              </span>
+            </div>
 
-          <button
-            onClick={() => setActiveView('BIOMETRICS_HUD')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeView === 'BIOMETRICS_HUD' ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <Eye className="w-3.5 h-3.5" /> Laboratorio Biométrico
-          </button>
-
-          <button
-            onClick={() => setActiveView('DATASET_EXPLORER')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeView === 'DATASET_EXPLORER' ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Explorador CSV
-          </button>
-        </div>
-
-        {/* Right Status */}
-        <div className="flex items-center gap-2">
-          {renderGlobalSettings()}
-        </div>
-      </div>
-
-      {/* VISTA 4: EXPLORADOR DE TABLAS CSV */}
-      {activeView === 'DATASET_EXPLORER' ? (
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <CsvTableViewer />
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col lg:flex-row gap-6 items-stretch min-h-0">
-
-          {/* LEFT PANEL: VIDEO, BIOMETRICS & CHAT (Visible in FULL & BIOMETRICS_HUD) */}
-          {(activeView === 'FULL' || activeView === 'BIOMETRICS_HUD') && (
-            <div className={`flex flex-col gap-6 min-h-0 ${activeView === 'BIOMETRICS_HUD' ? 'w-full' : 'flex-1 max-w-5xl'}`}>
-
-              {/* HUD Bars with TensorFlow.js Neural AI */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
-                      <Target className="w-4 h-4 text-emerald-500" /> ENFOQUE C.L.A.P.
-                    </span>
-                    <span className="font-mono text-xs font-bold text-emerald-400">
-                      {aiPrediction ? `${aiPrediction.focusScore}%` : '100%'}
-                    </span>
-                  </div>
-                  <div className="h-2.5 w-full bg-zinc-950 rounded-full overflow-hidden shadow-inner flex items-center mb-2">
-                    <div
-                      ref={focusRef}
-                      className="h-full bg-emerald-500 w-full rounded-full transition-[width] duration-300 ease-out shadow-[0_0_15px_rgba(16,185,129,0.6)]"
-                    />
-                  </div>
-                  <div className="text-[10px] font-mono text-zinc-400 truncate">
-                    {aiPrediction ? aiPrediction.statusMessage : 'Fijación ocular y atención óptima'}
-                  </div>
-                </div>
-
-                <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
-                  <div className="flex justify-between items-center mb-2">
-                    <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
-                      <Activity className="w-4 h-4 text-rose-500" /> CARGA COGNITIVA & FATIGA
-                    </span>
-                    <span className="font-mono text-xs font-bold text-rose-400">
-                      {aiPrediction ? `${aiPrediction.stressLevel}%` : '0%'}
-                    </span>
-                  </div>
-                  <div className="h-2.5 w-full bg-zinc-950 rounded-full overflow-hidden shadow-inner flex items-center mb-2">
-                    <div
-                      ref={fatigueRef}
-                      className="h-full bg-rose-500 w-0 rounded-full transition-[width] duration-300 ease-out shadow-[0_0_15px_rgba(244,63,94,0.6)]"
-                    />
-                  </div>
-                  <div className="text-[10px] font-mono text-zinc-400 truncate">
-                    {aiPrediction && aiPrediction.stressLevel > 50 ? '⚠️ Tensión o fatiga acumulada' : 'Nivel de estrés bajo y despejado'}
-                  </div>
-                </div>
-
-                <div className="bg-zinc-900 p-5 rounded-3xl shadow-xl border border-zinc-800/50 flex flex-col justify-between">
-                  <div className="flex justify-between items-center mb-1.5">
-                    <span className="font-mono text-[10px] sm:text-xs text-zinc-400 flex items-center gap-2 tracking-widest uppercase">
-                      <BrainCircuit className="w-4 h-4 text-cyan-400" /> RED NEURONAL LOCAL
-                    </span>
-                    <span className="font-mono text-[9px] px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-bold uppercase tracking-wider">
-                      TF.js 86.4% Acc
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-bold font-mono text-white tracking-wide">
-                      {aiPrediction ? aiPrediction.className : 'ENFOQUE'}
-                    </span>
-                    <span className="text-xs font-mono text-zinc-400 font-semibold">
-                      {aiPrediction ? `${(aiPrediction.confidence * 100).toFixed(0)}% Conf.` : '100%'}
-                    </span>
-                  </div>
-
-                  {/* Desglose Multi-Probabilidad de 6 Estados */}
-                  <div className="grid grid-cols-6 gap-1 pt-1 border-t border-zinc-800/60 text-center">
-                    <div title="Neutro" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 0 ? 'bg-emerald-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      NEU {aiPrediction ? Math.round((aiPrediction.probabilities[0] || 0) * 100) : 100}%
-                    </div>
-                    <div title="Flow" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 1 ? 'bg-sky-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      FLO {aiPrediction ? Math.round((aiPrediction.probabilities[1] || 0) * 100) : 0}%
-                    </div>
-                    <div title="Distracción" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 2 ? 'bg-amber-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      DIS {aiPrediction ? Math.round((aiPrediction.probabilities[2] || 0) * 100) : 0}%
-                    </div>
-                    <div title="Fatiga" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 3 ? 'bg-blue-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      FAT {aiPrediction ? Math.round((aiPrediction.probabilities[3] || 0) * 100) : 0}%
-                    </div>
-                    <div title="Sobreestimulación" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 4 ? 'bg-rose-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      SOB {aiPrediction ? Math.round((aiPrediction.probabilities[4] || 0) * 100) : 0}%
-                    </div>
-                    <div title="Agobio Postural" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 5 ? 'bg-purple-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
-                      AGO {aiPrediction ? Math.round((aiPrediction.probabilities[5] || 0) * 100) : 0}%
-                    </div>
-                  </div>
-                </div>
+            {/* Desglose Multi-Probabilidad de 5 Estados */}
+            <div className="grid grid-cols-5 gap-1 pt-1 border-t border-zinc-800/60 text-center">
+              <div title="Enfoque" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 0 ? 'bg-emerald-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
+                ENF {aiPrediction ? Math.round((aiPrediction.probabilities[0] || 0) * 100) : 100}%
               </div>
-
-              {/* WORKSPACE: Camera & Quick Chat */}
-              <div className="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
-                {/* Camera Viewport */}
-                <div className="relative rounded-3xl overflow-hidden bg-zinc-950 flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-0">
-                  <video ref={videoRef} className="absolute w-0 h-0 opacity-0 -z-10" autoPlay playsInline muted />
-                  <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full object-contain" />
-
-                  <div ref={statusRef} className="absolute top-4 left-4 px-4 py-2 rounded-md border font-mono text-xs tracking-wider bg-zinc-800/80 text-zinc-400 border-zinc-700 uppercase backdrop-blur-md shadow-2xl">
-                    🧠 INICIANDO RED NEURONAL TENSORFLOW.JS...
-                  </div>
-
-                  <button
-                    onClick={() => handleRecalibrate(false)}
-                    className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-md bg-black/60 hover:bg-black/80 hover:text-green-400 border border-zinc-700/50 backdrop-blur-md font-mono text-[10px] text-zinc-300 flex items-center gap-1.5 shadow-2xl transition-all cursor-pointer uppercase tracking-wider font-semibold"
-                    title="Reiniciar calibración biométrica"
-                  >
-                    🔄 Recalibrar IA
-                  </button>
-
-                  <div className="absolute bottom-4 left-4 flex gap-2">
-                    <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl">
-                      <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-red-500 animate-pulse'}`} /> {isPaused ? 'EN PAUSA' : 'INFERENCIA ACTIVA (TF.js 60 FPS)'}
-                    </span>
-                  </div>
-
-                  {isPaused && (
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-20 flex items-center justify-center pointer-events-none">
-                      <span className="text-3xl font-black tracking-[0.3em] text-blue-400 font-mono drop-shadow-[0_0_20px_rgba(59,130,246,0.8)]">PAUSADO</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Quick Info Chat */}
-                <div className="rounded-3xl bg-zinc-900 shadow-2xl border border-zinc-800 flex-[2.5] flex flex-col overflow-hidden min-h-[350px]">
-                  <div className="px-5 py-4 bg-zinc-950/50 border-b border-zinc-800 flex items-center gap-2 shrink-0">
-                    <MessageSquare className="w-5 h-5 text-emerald-500" />
-                    <span className="font-mono text-sm tracking-widest text-zinc-300 font-semibold uppercase">Chat de Asistencia</span>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 no-scrollbar scroll-smooth">
-                    {chatMessages.map((msg, i) => (
-                      <div key={i} className={`max-w-[90%] rounded-2xl px-5 py-3 text-sm leading-relaxed font-sans ${msg.role === 'user'
-                          ? 'bg-zinc-800 text-white self-end rounded-tr-sm border border-zinc-700'
-                          : 'bg-emerald-500/10 text-emerald-50 self-start rounded-tl-sm border border-emerald-500/20'
-                        }`}>
-                        {msg.content}
-                      </div>
-                    ))}
-                    {isChatLoading && (
-                      <div className="bg-emerald-500/10 text-emerald-500 self-start rounded-tl-sm rounded-2xl px-5 py-3 border border-emerald-500/20 flex gap-2 items-center">
-                        <span className="animate-pulse text-xs">●</span><span className="animate-pulse delay-75 text-xs">●</span><span className="animate-pulse delay-150 text-xs">●</span>
-                      </div>
-                    )}
-
-                    {proposedChange && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="max-w-[95%] self-start bg-zinc-900 border-2 border-emerald-500/30 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_0_30px_rgba(16,185,129,0.1)]"
-                      >
-                        <div className="flex flex-col gap-1.5">
-                          <span className="font-mono text-[10px] tracking-widest text-emerald-500 uppercase font-bold">💡 Propuesta de Nueva Misión</span>
-                          <h4 className="text-white font-semibold text-sm leading-snug">{proposedChange.proposedTask}</h4>
-                        </div>
-
-                        <div className="flex flex-col gap-1 border-t border-zinc-800 pt-3">
-                          <span className="font-mono text-[9px] tracking-wider text-zinc-500 uppercase">Micro-pasos de Acción:</span>
-                          <ul className="text-xs text-zinc-400 space-y-1.5 mt-1 list-disc pl-4 leading-relaxed">
-                            {proposedChange.proposedSteps.map((step, idx) => (
-                              <li key={idx}>{step}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="flex gap-2 mt-2">
-                          <button
-                            onClick={handleAcceptProposal}
-                            className="flex-1 py-2 px-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-xl transition-colors cursor-pointer uppercase tracking-wider"
-                          >
-                            Aceptar Nueva Tarea
-                          </button>
-                          <button
-                            onClick={() => setProposedChange(null)}
-                            className="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 hover:text-white text-zinc-400 text-xs rounded-xl transition-colors cursor-pointer"
-                          >
-                            Descartar
-                          </button>
-                        </div>
-                      </motion.div>
-                    )}
-
-                    <div ref={messagesEndRef} />
-                  </div>
-
-                  <form onSubmit={handleSendChat} className="p-4 bg-zinc-950/30 border-t border-zinc-800 shrink-0">
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={chatInput}
-                        onChange={e => setChatInput(e.target.value)}
-                        placeholder="Pregunta sin perder el foco..."
-                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white placeholder-zinc-600 font-mono transition-shadow min-w-0"
-                      />
-                      <button type="submit" disabled={isChatLoading || !chatInput.trim()} className="bg-emerald-500 text-black px-4 rounded-xl flex items-center justify-center hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500 transition-colors shrink-0">
-                        <Send className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </form>
-                </div>
+              <div title="Distracción" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 1 ? 'bg-amber-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
+                DIS {aiPrediction ? Math.round((aiPrediction.probabilities[1] || 0) * 100) : 0}%
+              </div>
+              <div title="Fatiga" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 2 ? 'bg-blue-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
+                FAT {aiPrediction ? Math.round((aiPrediction.probabilities[2] || 0) * 100) : 0}%
+              </div>
+              <div title="Sobreestimulación" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 3 ? 'bg-rose-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
+                SOB {aiPrediction ? Math.round((aiPrediction.probabilities[3] || 0) * 100) : 0}%
+              </div>
+              <div title="Agobio Postural" className={`py-1 rounded-md text-[8px] font-mono font-bold ${aiPrediction?.classIndex === 4 ? 'bg-purple-500 text-black shadow-sm' : 'bg-zinc-950 text-zinc-500'}`}>
+                AGO {aiPrediction ? Math.round((aiPrediction.probabilities[4] || 0) * 100) : 0}%
               </div>
             </div>
-          )}
+          </div>
+        </div>
 
-          {/* RIGHT PANEL: IA MENTOR DASHBOARD (Visible in FULL & CLEAN_STUDY) */}
-          {(activeView === 'FULL' || activeView === 'CLEAN_STUDY') && (
-            <div className={`flex flex-col gap-6 lg:h-full min-h-0 ${activeView === 'CLEAN_STUDY' ? 'flex-1 max-w-4xl mx-auto w-full' : 'w-full lg:w-[450px] shrink-0'}`}>
+        {/* WORKSPACE: Camera & Quick Chat */}
+        <div className="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
+          {/* Camera Viewport */}
+          <div className="relative rounded-3xl overflow-hidden bg-zinc-950 flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-0">
+            {/* Hidden native video element for media pipe */}
+            <video ref={videoRef} className="absolute w-0 h-0 opacity-0 -z-10" autoPlay playsInline muted />
 
-              {/* Si estamos en modo Estudio Limpio, renderizar background video invisible para mantener telemetría viva */}
-              {activeView === 'CLEAN_STUDY' && (
-                <div className="hidden">
-                  <video ref={videoRef} autoPlay playsInline muted />
-                  <canvas ref={canvasRef} width={640} height={480} />
-                  <div ref={statusRef} />
-                  <div ref={focusRef} />
-                  <div ref={fatigueRef} />
+            {/* The visible Canvas with overlay */}
+            <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full object-contain" />
+
+            <div ref={statusRef} className="absolute top-4 left-4 px-4 py-2 rounded-md border font-mono text-xs tracking-wider bg-zinc-800/80 text-zinc-400 border-zinc-700 uppercase backdrop-blur-md shadow-2xl">
+              🧠 INICIANDO RED NEURONAL TENSORFLOW.JS...
+            </div>
+
+            <button
+              onClick={() => handleRecalibrate(false)}
+              className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-md bg-black/60 hover:bg-black/80 hover:text-green-400 border border-zinc-700/50 backdrop-blur-md font-mono text-[10px] text-zinc-300 flex items-center gap-1.5 shadow-2xl transition-all cursor-pointer uppercase tracking-wider font-semibold"
+              title="Reiniciar calibración biométrica"
+            >
+              🔄 Recalibrar IA
+            </button>
+
+            <div className="absolute bottom-4 left-4 flex gap-2">
+              <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl">
+                <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-red-500 animate-pulse'}`} /> {isPaused ? 'EN PAUSA' : 'INFERENCIA ACTIVA (TF.js)'}
+              </span>
+            </div>
+
+            {isPaused && (
+              <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-20 flex items-center justify-center pointer-events-none">
+                <span className="text-3xl font-black tracking-[0.3em] text-blue-400 font-mono drop-shadow-[0_0_20px_rgba(59,130,246,0.8)]">PAUSADO</span>
+              </div>
+            )}
+          </div>
+
+          {/* Quick Info Chat */}
+          <div className="rounded-3xl bg-zinc-900 shadow-2xl border border-zinc-800 flex-[2.5] flex flex-col overflow-hidden min-h-[350px]">
+            {/* Header */}
+            <div className="px-5 py-4 bg-zinc-950/50 border-b border-zinc-800 flex items-center gap-2 shrink-0">
+              <MessageSquare className="w-5 h-5 text-emerald-500" />
+              <span className="font-mono text-sm tracking-widest text-zinc-300 font-semibold uppercase">Chat de Asistencia</span>
+            </div>
+            {/* Messages view */}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 no-scrollbar scroll-smooth">
+              {chatMessages.map((msg, i) => (
+                <div key={i} className={`max-w-[90%] rounded-2xl px-5 py-3 text-sm leading-relaxed font-sans ${msg.role === 'user'
+                    ? 'bg-zinc-800 text-white self-end rounded-tr-sm border border-zinc-700'
+                    : 'bg-emerald-500/10 text-emerald-50 self-start rounded-tl-sm border border-emerald-500/20'
+                  }`}>
+                  {msg.content}
+                </div>
+              ))}
+              {isChatLoading && (
+                <div className="bg-emerald-500/10 text-emerald-500 self-start rounded-tl-sm rounded-2xl px-5 py-3 border border-emerald-500/20 flex gap-2 items-center">
+                  <span className="animate-pulse text-xs">●</span><span className="animate-pulse delay-75 text-xs">●</span><span className="animate-pulse delay-150 text-xs">●</span>
                 </div>
               )}
 
-              <div className="bg-zinc-900 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl border border-zinc-900 min-h-[500px] relative">
-
-                {/* MASSIVE REWARD OVERLAY */}
-                <AnimatePresence mode="wait">
-                  {isShowingReward && (
-                    <motion.div
-                      key="reward-overlay"
-                      initial={{ opacity: 0, scale: 0.3, y: 100 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 1.5 }}
-                      transition={{ type: "spring", stiffness: 300, damping: 15 }}
-                      className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none backdrop-blur-sm bg-black/40"
-                    >
-                      <div className="bg-zinc-950 border-2 border-green-500 px-8 py-6 rounded-[3rem] shadow-[0_0_100px_rgba(34,197,94,0.6)] flex items-center justify-center transform -rotate-3">
-                        <span className="text-3xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-200 drop-shadow-[0_0_30px_rgba(52,211,153,0.8)] whitespace-nowrap">
-                          {rewardKaomoji}
-                        </span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-
-                <div className="p-6 pb-4 bg-zinc-900 flex justify-between items-center z-10 shadow-sm shadow-black/20">
-                  <div className="flex items-center gap-3">
-                    <NeuroMascot expression={mascotExpression} size={46} />
-                    <div className="flex flex-col gap-0.5">
-                      <h2 className="text-white text-lg tracking-tight font-medium flex items-center gap-2">
-                        Mentor IA Autónomo
-                      </h2>
-                      <p className="text-xs font-mono text-zinc-500 truncate max-w-[180px]">OBJ: {task}</p>
-                    </div>
+              {proposedChange && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="max-w-[95%] self-start bg-zinc-900 border-2 border-emerald-500/30 rounded-2xl p-5 flex flex-col gap-4 shadow-[0_0_30px_rgba(16,185,129,0.1)]"
+                >
+                  <div className="flex flex-col gap-1.5">
+                    <span className="font-mono text-[10px] tracking-widest text-emerald-500 uppercase font-bold">💡 Propuesta de Nueva Misión</span>
+                    <h4 className="text-white font-semibold text-sm leading-snug">{proposedChange.proposedTask}</h4>
                   </div>
-                  {/* Timer & Pause Controls */}
-                  <div className="flex gap-2">
+
+                  <div className="flex flex-col gap-1 border-t border-zinc-800 pt-3">
+                    <span className="font-mono text-[9px] tracking-wider text-zinc-500 uppercase">Micro-pasos de Acción:</span>
+                    <ul className="text-xs text-zinc-400 space-y-1.5 mt-1 list-disc pl-4 leading-relaxed">
+                      {proposedChange.proposedSteps.map((step, idx) => (
+                        <li key={idx}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="flex gap-2 mt-2">
                     <button
-                      onClick={() => setIsPaused(!isPaused)}
-                      className={`flex items-center justify-center w-12 rounded-xl shadow-lg border transition-colors ${isPaused ? 'bg-blue-500 border-blue-400 text-black' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700 text-zinc-300'
-                        }`}
-                      title="Pausar / Reanudar (Tecla Q)"
+                      onClick={handleAcceptProposal}
+                      className="flex-1 py-2 px-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-xs rounded-xl transition-colors cursor-pointer uppercase tracking-wider"
                     >
-                      {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
+                      Aceptar Nueva Tarea
                     </button>
-                    <div className={`flex items-center gap-2 px-4 py-2 bg-black border rounded-xl transition-all ${isPaused ? 'border-zinc-800 opacity-50' : 'border-green-500/40 shadow-[0_0_20px_rgba(34,197,94,0.15)]'
-                      }`}>
-                      <Timer className={`w-5 h-5 ${isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse'}`} />
-                      <span className={`font-mono text-xl tracking-[0.15em] font-bold ${isPaused ? 'text-zinc-600' : 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]'
-                        }`}>
-                        {formatTime(elapsedTime)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-6 flex-1 overflow-y-auto no-scrollbar">
-                  <div className="space-y-4">
-                    {steps.map((step, i) => {
-                      const isCompleted = i < currentStepIdx;
-                      const isCurrent = i === currentStepIdx;
-
-                      return (
-                        <motion.div
-                          key={i}
-                          layout
-                          initial={{ opacity: 0, x: 20 }}
-                          animate={isCurrent ? {
-                            opacity: 1,
-                            x: 0,
-                            boxShadow: ["0px 0px 0px rgba(52,211,153,0)", "0px 0px 25px rgba(52,211,153,0.3)", "0px 0px 15px rgba(52,211,153,0.1)"],
-                            backgroundColor: ["rgba(24,24,27,1)", "rgba(16,185,129,0.1)", "rgba(34,197,94,0.1)"]
-                          } : {
-                            opacity: 1,
-                            x: 0,
-                            boxShadow: "0px 0px 0px rgba(52,211,153,0)",
-                            backgroundColor: isCompleted ? "rgba(24,24,27,1)" : "rgba(24,24,27,0.5)"
-                          }}
-                          transition={{
-                            delay: i * 0.1,
-                            boxShadow: { duration: 1.5, ease: "easeOut" },
-                            backgroundColor: { duration: 1.5, ease: "easeOut" }
-                          }}
-                          className={`p-5 rounded-2xl flex items-start gap-4 transition-all duration-300 ${isCurrent
-                              ? 'ring-1 ring-green-500/20'
-                              : isCompleted
-                                ? 'opacity-40 border border-zinc-900/50'
-                                : 'opacity-80 border border-zinc-800'
-                            }`}
-                        >
-                          <motion.div
-                            className="mt-0.5 min-w-6 origin-center"
-                            animate={isCurrent ? { scale: [1, 1.3, 1] } : {}}
-                            transition={{ duration: 0.6, repeat: isCurrent ? Infinity : 0, repeatDelay: 1.5 }}
-                          >
-                            {isCompleted ? (
-                              <CheckCircle className="w-6 h-6 text-zinc-600" />
-                            ) : isCurrent ? (
-                              <ArrowRight className="w-6 h-6 text-green-500" />
-                            ) : (
-                              <div className="w-6 h-6 rounded-full border-2 border-zinc-800" />
-                            )}
-                          </motion.div>
-
-                          <span className={`text-base leading-relaxed ${isCurrent ? 'text-green-50 font-semibold' : isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-400'
-                            }`}>
-                            {step}
-                          </span>
-                        </motion.div>
-                      )
-                    })}
-
-                    {currentStepIdx >= steps.length && steps.length > 0 && (
-                      <motion.div
-                        initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
-                        animate={{
-                          opacity: 1,
-                          scale: 1,
-                          rotate: 0,
-                          backgroundColor: ["#ffffff", "#dcfce7", "#ffffff"]
-                        }}
-                        transition={{ duration: 1.5, ease: "easeOut" }}
-                        className="p-6 mt-8 rounded-2xl bg-white text-black text-center flex flex-col items-center gap-3 shadow-[0_0_40px_rgba(34,197,94,0.2)] relative overflow-hidden"
-                      >
-                        <div className="absolute inset-0 bg-green-500/5 pointer-events-none" />
-                        <Target className="w-16 h-16 text-green-500 mb-2 animate-bounce" />
-                        <h3 className="font-black text-2xl tracking-tight text-center text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-400">
-                          (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧<br />¡Misión Cumplida!
-                        </h3>
-                        <p className="text-sm opacity-80 leading-relaxed font-mono mt-2 mb-4 font-semibold text-zinc-700">Completado en {formatTime(elapsedTime)}</p>
-                        <button
-                          onClick={() => window.location.reload()}
-                          className="w-full py-4 bg-black text-white rounded-2xl text-base font-bold hover:bg-zinc-800 transition-colors uppercase tracking-widest"
-                        >
-                          Iniciar Nueva Misión
-                        </button>
-                      </motion.div>
-                    )}
-                  </div>
-                </div>
-
-                {currentStepIdx < steps.length && (
-                  <div className="p-6 bg-zinc-900 border-t border-zinc-800/50 z-10 relative">
                     <button
-                      onClick={handleNextStep}
-                      className="w-full py-5 bg-green-500 hover:bg-green-400 text-black font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.2)]"
+                      onClick={() => setProposedChange(null)}
+                      className="py-2 px-3 bg-zinc-800 hover:bg-zinc-700 hover:text-white text-zinc-400 text-xs rounded-xl transition-colors cursor-pointer"
                     >
-                      {isShowingReward ? "¡VAMOS!" : "COMPLETAR PASO"}
-                      <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+                      Descartar
                     </button>
-                    <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-4">
-                      Pulsa para recuperar dopamina
-                    </p>
                   </div>
-                )}
+                </motion.div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+            {/* Input form */}
+            <form onSubmit={handleSendChat} className="p-4 bg-zinc-950/30 border-t border-zinc-800 shrink-0">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  placeholder="Pregunta sin perder el foco..."
+                  className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-1 focus:ring-emerald-500 text-white placeholder-zinc-600 font-mono transition-shadow min-w-0"
+                />
+                <button type="submit" disabled={isChatLoading || !chatInput.trim()} className="bg-emerald-500 text-black px-4 rounded-xl flex items-center justify-center hover:bg-emerald-400 disabled:opacity-50 disabled:hover:bg-emerald-500 transition-colors shrink-0">
+                  <Send className="w-5 h-5" />
+                </button>
               </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT PANEL: IA MENTOR DASHBOARD */}
+      <div className="w-full lg:w-[450px] shrink-0 flex flex-col gap-6 lg:h-full min-h-0">
+
+        <div className="bg-zinc-900 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl border border-zinc-900 min-h-[500px] relative">
+
+          {/* MASSIVE REWARD OVERLAY */}
+          <AnimatePresence mode="wait">
+            {isShowingReward && (
+              <motion.div
+                key="reward-overlay"
+                initial={{ opacity: 0, scale: 0.3, y: 100 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 1.5 }}
+                transition={{ type: "spring", stiffness: 300, damping: 15 }}
+                className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none backdrop-blur-sm bg-black/40"
+              >
+                <div className="bg-zinc-950 border-2 border-green-500 px-8 py-6 rounded-[3rem] shadow-[0_0_100px_rgba(34,197,94,0.6)] flex items-center justify-center transform -rotate-3">
+                  <span className="text-3xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-green-400 to-emerald-200 drop-shadow-[0_0_30px_rgba(52,211,153,0.8)] whitespace-nowrap">
+                    {rewardKaomoji}
+                  </span>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <div className="p-6 pb-4 bg-zinc-900 flex justify-between items-center z-10 shadow-sm shadow-black/20">
+            <div className="flex items-center gap-3">
+              <NeuroMascot expression={mascotExpression} size={46} />
+              <div className="flex flex-col gap-0.5">
+                <h2 className="text-white text-lg tracking-tight font-medium flex items-center gap-2">
+                  Mentor IA Autónomo
+                </h2>
+                <p className="text-xs font-mono text-zinc-500 truncate max-w-[180px]">OBJ: {task}</p>
+              </div>
+            </div>
+            {/* Timer & Pause Controls */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setIsPaused(!isPaused)}
+                className={`flex items-center justify-center w-12 rounded-xl shadow-lg border transition-colors ${isPaused ? 'bg-blue-500 border-blue-400 text-black' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700 text-zinc-300'
+                  }`}
+                title="Pausar / Reanudar (Tecla Q)"
+              >
+                {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
+              </button>
+              <div className={`flex items-center gap-2 px-4 py-2 bg-black border rounded-xl transition-all ${isPaused ? 'border-zinc-800 opacity-50' : 'border-green-500/40 shadow-[0_0_20px_rgba(34,197,94,0.15)]'
+                }`}>
+                <Timer className={`w-5 h-5 ${isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse'}`} />
+                <span className={`font-mono text-xl tracking-[0.15em] font-bold ${isPaused ? 'text-zinc-600' : 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]'
+                  }`}>
+                  {formatTime(elapsedTime)}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 flex-1 overflow-y-auto no-scrollbar">
+            <div className="space-y-4">
+              {steps.map((step, i) => {
+                const isCompleted = i < currentStepIdx;
+                const isCurrent = i === currentStepIdx;
+
+                return (
+                  <motion.div
+                    key={i}
+                    layout
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={isCurrent ? {
+                      opacity: 1,
+                      x: 0,
+                      boxShadow: ["0px 0px 0px rgba(52,211,153,0)", "0px 0px 25px rgba(52,211,153,0.3)", "0px 0px 15px rgba(52,211,153,0.1)"],
+                      backgroundColor: ["rgba(24,24,27,1)", "rgba(16,185,129,0.1)", "rgba(34,197,94,0.1)"]
+                    } : {
+                      opacity: 1,
+                      x: 0,
+                      boxShadow: "0px 0px 0px rgba(52,211,153,0)",
+                      backgroundColor: isCompleted ? "rgba(24,24,27,1)" : "rgba(24,24,27,0.5)"
+                    }}
+                    transition={{
+                      delay: i * 0.1,
+                      boxShadow: { duration: 1.5, ease: "easeOut" },
+                      backgroundColor: { duration: 1.5, ease: "easeOut" }
+                    }}
+                    className={`p-5 rounded-2xl flex items-start gap-4 transition-all duration-300 ${isCurrent
+                        ? 'ring-1 ring-green-500/20'
+                        : isCompleted
+                          ? 'opacity-40 border border-zinc-900/50'
+                          : 'opacity-80 border border-zinc-800'
+                      }`}
+                  >
+                    <motion.div
+                      className="mt-0.5 min-w-6 origin-center"
+                      animate={isCurrent ? { scale: [1, 1.3, 1] } : {}}
+                      transition={{ duration: 0.6, repeat: isCurrent ? Infinity : 0, repeatDelay: 1.5 }}
+                    >
+                      {isCompleted ? (
+                        <CheckCircle className="w-6 h-6 text-zinc-600" />
+                      ) : isCurrent ? (
+                        <ArrowRight className="w-6 h-6 text-green-500" />
+                      ) : (
+                        <div className="w-6 h-6 rounded-full border-2 border-zinc-800" />
+                      )}
+                    </motion.div>
+
+                    <span className={`text-base leading-relaxed ${isCurrent ? 'text-green-50 font-semibold' : isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-400'
+                      }`}>
+                      {step}
+                    </span>
+                  </motion.div>
+                )
+              })}
+
+              {currentStepIdx >= steps.length && steps.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
+                  animate={{
+                    opacity: 1,
+                    scale: 1,
+                    rotate: 0,
+                    backgroundColor: ["#ffffff", "#dcfce7", "#ffffff"]
+                  }}
+                  transition={{ duration: 1.5, ease: "easeOut" }}
+                  className="p-6 mt-8 rounded-2xl bg-white text-black text-center flex flex-col items-center gap-3 shadow-[0_0_40px_rgba(34,197,94,0.2)] relative overflow-hidden"
+                >
+                  <div className="absolute inset-0 bg-green-500/5 pointer-events-none" />
+                  <Target className="w-16 h-16 text-green-500 mb-2 animate-bounce" />
+                  <h3 className="font-black text-2xl tracking-tight text-center text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-400">
+                    (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧<br />¡Misión Cumplida!
+                  </h3>
+                  <p className="text-sm opacity-80 leading-relaxed font-mono mt-2 mb-4 font-semibold text-zinc-700">Completado en {formatTime(elapsedTime)}</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="w-full py-4 bg-black text-white rounded-2xl text-base font-bold hover:bg-zinc-800 transition-colors uppercase tracking-widest"
+                  >
+                    Iniciar Nueva Misión
+                  </button>
+                </motion.div>
+              )}
+            </div>
+          </div>
+
+          {currentStepIdx < steps.length && (
+            <div className="p-6 bg-zinc-900 border-t border-zinc-800/50 z-10 relative">
+              <button
+                onClick={handleNextStep}
+                className="w-full py-5 bg-green-500 hover:bg-green-400 text-black font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.2)]"
+              >
+                {isShowingReward ? "¡VAMOS!" : "COMPLETAR PASO"}
+                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+              </button>
+              <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-4">
+                Pulsa para recuperar dopamina
+              </p>
             </div>
           )}
         </div>
-      )}
+      </div>
+      {renderGlobalSettings()}
     </div>
   );
 }
-
