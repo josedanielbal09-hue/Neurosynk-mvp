@@ -4,7 +4,8 @@ import {
   Eye, User, Key, CheckCircle, RefreshCw, Volume2, VolumeX, Sparkles,
   RotateCcw, FastForward, Zap, Cpu, ArrowUpRight, Award
 } from 'lucide-react';
-import { exportRawFramesToCSV, exportWindowsToCSV, FrameRecord, WindowRecord } from './services/csvExporter';
+import { exportRawFramesToCSV, exportMasterTelemetryCSV, exportWindowsToCSV, FrameRecord, WindowRecord } from './services/csvExporter';
+
 import { aggregateFramesIntoWindows } from './services/windowAggregator';
 import {
   trainNeuroSynkModel,
@@ -1232,24 +1233,28 @@ export default function App() {
 
               <div className="space-y-3">
                 <button
-                  onClick={() => exportRawFramesToCSV(framesBufferRef.current)}
-                  disabled={recordedCount === 0}
-                  className="w-full py-3.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer uppercase tracking-wider"
-                >
-                  <Download className="w-4 h-4" /> Descargar CSV por Cuadros
-                </button>
-
-                <button
                   onClick={() => {
                     const windows = aggregateFramesIntoWindows(framesBufferRef.current, 2000);
-                    exportWindowsToCSV(windows);
+                    exportMasterTelemetryCSV(windows);
                   }}
                   disabled={recordedCount === 0}
-                  className="w-full py-3.5 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 font-black text-xs rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer border border-emerald-500/30 uppercase tracking-wider"
+                  className="w-full py-4 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-sm rounded-2xl transition-all flex items-center justify-center gap-2 disabled:opacity-40 cursor-pointer uppercase tracking-wider shadow-lg shadow-emerald-500/20"
                 >
-                  <Download className="w-4 h-4 text-emerald-400" /> Descargar CSV Ventanas 2s
+                  <Download className="w-5 h-5" /> Descargar Dataset Maestro HD (.CSV)
                 </button>
+
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] font-mono text-zinc-500">Formato Unificado de 28+ Métricas</span>
+                  <button
+                    onClick={() => exportRawFramesToCSV(framesBufferRef.current)}
+                    disabled={recordedCount === 0}
+                    className="text-[10px] font-mono text-zinc-400 hover:text-zinc-200 underline cursor-pointer disabled:opacity-30"
+                  >
+                    (Opcional: CSV Cuadros Crudos)
+                  </button>
+                </div>
               </div>
+
             </div>
           </div>
         </div>

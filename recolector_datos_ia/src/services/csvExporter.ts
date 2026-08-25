@@ -167,14 +167,14 @@ export function exportRawFramesToCSV(records: FrameRecord[], filename?: string) 
   }, 500);
 }
 
-export function exportWindowsToCSV(windows: WindowRecord[], filename?: string) {
+export function exportMasterTelemetryCSV(windows: WindowRecord[], filename?: string) {
   if (windows.length === 0) return;
 
   const subject = windows[0]?.subject_id || 'general';
-  const targetFilename = filename || `dataset_ventanas_HD_${subject}_${Date.now()}.csv`;
+  const targetFilename = filename || `dataset_maestro_HD_${subject}_${Date.now()}.csv`;
 
   const headers = [
-    'window_id',
+    'sample_id',
     'subject_id',
     'session_id',
     'task_name',
@@ -211,8 +211,8 @@ export function exportWindowsToCSV(windows: WindowRecord[], filename?: string) {
     'label_name'
   ];
 
-  const rows = windows.map(w => [
-    w.window_id,
+  const rows = windows.map((w, idx) => [
+    idx + 1,
     `"${w.subject_id || 'anon'}"`,
     `"${w.session_id || 'session_1'}"`,
     `"${w.task_name || 'estudio'}"`,
@@ -265,3 +265,6 @@ export function exportWindowsToCSV(windows: WindowRecord[], filename?: string) {
     URL.revokeObjectURL(url);
   }, 500);
 }
+
+export const exportWindowsToCSV = exportMasterTelemetryCSV;
+

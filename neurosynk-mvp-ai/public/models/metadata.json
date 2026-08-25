@@ -35,8 +35,8 @@
     "SOBREESTIMULACIÓN",
     "AGOBIO POSTURAL"
   ],
-  "accuracy": "87.3%",
-  "loss": "0.3624",
+  "accuracy": "86.4%",
+  "loss": "0.3699",
   "epochs": 80,
   "samplesCount": 6979,
   "featureNames": [
