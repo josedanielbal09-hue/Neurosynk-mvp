@@ -680,19 +680,25 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     // Draw Video feed onto canvas
     canvasCtx.drawImage(results.image, 0, 0, width, height);
 
-    // MediaPipe overlays (Classic Python Styling)
-    if (results.faceLandmarks) {
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYEBROW, { color: '#FF3030', lineWidth: 1.5 }); // Rojo
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYE, { color: '#FF3030', lineWidth: 1.5 });
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYEBROW, { color: '#30FF30', lineWidth: 1.5 }); // Verde
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYE, { color: '#30FF30', lineWidth: 1.5 });
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_FACE_OVAL, { color: '#E0E0E0', lineWidth: 1.5 }); // Blanco
-      window.drawConnectors(canvasCtx, results.faceLandmarks, window.FACEMESH_LIPS, { color: '#E0E0E0', lineWidth: 1.5 });
+    // MediaPipe overlays (Safe Drawing Guards)
+    const drawConn = window.drawConnectors;
+    const drawLnd = window.drawLandmarks;
+    if (results.faceLandmarks && typeof drawConn === 'function') {
+      if (window.FACEMESH_RIGHT_EYEBROW) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYEBROW, { color: '#FF3030', lineWidth: 1.5 });
+      if (window.FACEMESH_RIGHT_EYE) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_RIGHT_EYE, { color: '#FF3030', lineWidth: 1.5 });
+      if (window.FACEMESH_LEFT_EYEBROW) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYEBROW, { color: '#30FF30', lineWidth: 1.5 });
+      if (window.FACEMESH_LEFT_EYE) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_LEFT_EYE, { color: '#30FF30', lineWidth: 1.5 });
+      if (window.FACEMESH_FACE_OVAL) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_FACE_OVAL, { color: '#E0E0E0', lineWidth: 1.5 });
+      if (window.FACEMESH_LIPS) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_LIPS, { color: '#E0E0E0', lineWidth: 1.5 });
+      if (window.FACEMESH_TESSELATION) drawConn(canvasCtx, results.faceLandmarks, window.FACEMESH_TESSELATION, { color: '#10B98133', lineWidth: 0.6 });
     }
-    if (results.poseLandmarks && window.POSE_CONNECTIONS) {
-      window.drawConnectors(canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#E0E0E0', lineWidth: 2 });
-      window.drawLandmarks(canvasCtx, results.poseLandmarks, { color: '#00FFFF', lineWidth: 1, radius: 2.5 });
+    if (results.poseLandmarks && typeof drawConn === 'function' && window.POSE_CONNECTIONS) {
+      drawConn(canvasCtx, results.poseLandmarks, window.POSE_CONNECTIONS, { color: '#E0E0E0', lineWidth: 1.8 });
+      if (typeof drawLnd === 'function') {
+        drawLnd(canvasCtx, results.poseLandmarks, { color: '#00FFFF', lineWidth: 1, radius: 2.0 });
+      }
     }
+
 
     canvasCtx.restore();
 

@@ -212,7 +212,7 @@ async function trainAndExport() {
     fs.writeFileSync(modelJsonPath, JSON.stringify(modelJson, null, 2), 'utf-8');
 
     if (artifacts.weightData) {
-      const buffer = Buffer.from(artifacts.weightData);
+      const buffer = Buffer.from(artifacts.weightData as ArrayBuffer);
       fs.writeFileSync(weightsBinPath, buffer);
     }
 
@@ -222,9 +222,10 @@ async function trainAndExport() {
         modelTopologyType: 'JSON',
         modelTopologyBytes: artifacts.modelTopology ? JSON.stringify(artifacts.modelTopology).length : 0,
         weightSpecsBytes: artifacts.weightSpecs ? JSON.stringify(artifacts.weightSpecs).length : 0,
-        weightDataBytes: artifacts.weightData ? artifacts.weightData.byteLength : 0
+        weightDataBytes: (artifacts.weightData as any)?.byteLength || 0
       }
     };
+
   }));
 
   // Guardar metadata.json
