@@ -39,5 +39,14 @@ Thumbs.db
 # Backup & Legacy archive (Keeps old versions safely on your PC without uploading to GitHub)
 legacy_archive/
 descargas_focusbud/
+_archivo_historico_privado/
+neurosynk-mvp-beta/
+backend-ai-python/
+clinical_knowledge/
 *.zip
+*.ipynb
+*.py
+*.csv
+dataset_*.csv
+neurosynk-mvp-ai/public/*.csv
 
