@@ -13,6 +13,26 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 // Pero conservamos esto para verificar si el servidor local tiene la clave en .env.local
 const serverApiKey = process.env.GEMINI_API_KEY;
 
+async function generateWithModelFallback(ai: GoogleGenAI, params: any) {
+  const models = ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-1.5-flash", "gemini-2.0-flash"];
+  let lastErr = null;
+  for (const model of models) {
+    try {
+      const res = await ai.models.generateContent({
+        ...params,
+        model
+      });
+      if (res && res.text) {
+        return res;
+      }
+    } catch (e: any) {
+      lastErr = e;
+      console.warn(`Model ${model} failed, trying next...:`, e?.message || e);
+    }
+  }
+  throw lastErr || new Error("Todos los modelos de Gemini fallaron");
+}
+
 app.post("/api/split-task", async (req, res) => {
   const { task, context } = req.body;
   if (!task) {
@@ -41,11 +61,10 @@ app.post("/api/split-task", async (req, res) => {
     const prompt_sistema = `Eres el Mentor NeuroSynk. 
 Regla 1: NUNCA resuelvas la tarea.
 Regla 2: Divide la tarea en 4 micro-pasos absurdamente fáciles basados en el contexto del usuario.
-Regla 3: Cada paso debe ser especifico y descriptivo (entre 15 a 25 palabras).
+Regla 3: Cada paso debe ser específico, claro y descriptivo. Tienes absoluta libertad en la longitud: pueden ser cortos y directos, o extenderse hasta 50 palabras solo si es necesario para brindar máxima claridad.
 Regla 4: Responde en español. Usa solo texto plano sin formato markdown.`;
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+    const completion = await generateWithModelFallback(ai, {
       contents: `Tarea a dividir: ${task}\nContexto adicional del usuario: ${context || 'Ninguno'}`,
       config: {
         systemInstruction: prompt_sistema,
@@ -120,12 +139,11 @@ app.post("/api/subdivide-step", async (req, res) => {
   try {
     const prompt_sistema = `Eres el Mentor NeuroSynk.
 El usuario está bloqueado o perdiendo el foco en el paso número ${stepNumber}: "${parentStep}" dentro de la tarea general: "${taskContext || 'Ninguna'}".
-Divide este paso específico en 3 sub-pasos absurdamente fáciles, secuenciales y sumamente descriptivos (entre 10 y 20 palabras).
+Divide este paso específico en 3 sub-pasos absurdamente fáciles, secuenciales y sumamente descriptivos. Tienes total libertad en la extensión (cortos o de hasta 50 palabras si el paso requiere explicar un detalle clave).
 Numeración: Comienza cada sub-paso obligatoriamente con el prefijo "${stepNumber}.1 ", "${stepNumber}.2 ", o "${stepNumber}.3 ".
 No uses ningún formato markdown.`;
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+    const completion = await generateWithModelFallback(ai, {
       contents: `Paso a dividir: ${parentStep}`,
       config: {
         systemInstruction: prompt_sistema,
@@ -257,8 +275,7 @@ Regla 6: INTENCIÓN DE CAMBIO DE TEMA: Si el usuario indica explícitamente que 
     console.log("Instrucción del sistema:", finalSystemInstruction);
     console.log("Mensajes a procesar:", JSON.stringify(contents, null, 2));
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-3.1-flash-lite",
+    const completion = await generateWithModelFallback(ai, {
       contents: contents,
       config: {
         systemInstruction: finalSystemInstruction,

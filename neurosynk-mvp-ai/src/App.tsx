@@ -6,7 +6,7 @@ import { aiClient } from './api/aiClient';
 import { AIInferenceResponse } from './types/aiContracts';
 import { sessionTelemetry } from './services/sessionTelemetry';
 import { TelemetryDrawer } from './components/TelemetryDrawer';
-import { CsvTableViewer } from './components/CsvTableViewer';
+import { splitTaskUniversal, subdivideStepUniversal, chatUniversal } from './services/geminiClient';
 
 
 declare global {
@@ -135,18 +135,20 @@ export default function App() {
 
   useEffect(() => {
     const checkApiStatus = async () => {
+      if (localStorage.getItem('gemini_api_key')) {
+        setApiStatus('browser');
+        return;
+      }
       try {
         const response = await fetch('/api/api-status');
         const data = await response.json();
-        if (localStorage.getItem('gemini_api_key')) {
-          setApiStatus('browser');
-        } else if (data.hasServerKey) {
+        if (data.hasServerKey) {
           setApiStatus('server');
         } else {
           setApiStatus('none');
         }
       } catch (e) {
-        console.error("Error checking API status:", e);
+        setApiStatus('none');
       }
     };
     checkApiStatus();
@@ -154,8 +156,8 @@ export default function App() {
 
   useEffect(() => {
     if (!isAppLoading) return;
-    const duration = 2500;
-    const intervalTime = 25;
+    const duration = 1000;
+    const intervalTime = 20;
     const step = 100 / (duration / intervalTime);
 
     const timer = setInterval(() => {
@@ -166,7 +168,7 @@ export default function App() {
           setMascotExpression('happy');
           setTimeout(() => {
             setIsAppLoading(false);
-          }, 600);
+          }, 300);
           return 100;
         }
         return next;
@@ -175,6 +177,32 @@ export default function App() {
 
     return () => clearInterval(timer);
   }, [isAppLoading]);
+
+  // Precarga asíncrona en segundo plano de MediaPipe Holistic para arranque instantáneo
+  useEffect(() => {
+    const prewarmMediaPipe = async () => {
+      try {
+        if (window.Holistic && !holisticRef.current) {
+          const preHolistic = new window.Holistic({
+            locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
+          });
+          preHolistic.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: false,
+            smoothSegmentation: true,
+            refineFaceLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5,
+          });
+          holisticRef.current = preHolistic;
+        }
+      } catch (e) {
+        console.debug("MediaPipe pre-warming:", e);
+      }
+    };
+    prewarmMediaPipe();
+  }, []);
 
   // Chat States
   const [chatMessages, setChatMessages] = useState<{ role: string, content: string }[]>([
@@ -248,7 +276,7 @@ export default function App() {
   }, []);
 
   const [appStage, setAppStage] = useState<'LOGIN' | 'BRIEFING' | 'FOCUS'>('LOGIN');
-  const [activeView, setActiveView] = useState<'FULL' | 'CLEAN_STUDY' | 'BIOMETRICS_HUD' | 'DATASET_EXPLORER'>('FULL');
+  const [activeView, setActiveView] = useState<'FULL' | 'CLEAN_STUDY' | 'BIOMETRICS_HUD'>('FULL');
   const [isTelemetryOpen, setIsTelemetryOpen] = useState<boolean>(false);
   const [briefingMsgs, setBriefingMsgs] = useState<{ role: string, content: string }[]>([]);
 
@@ -312,19 +340,7 @@ export default function App() {
       }]);
 
       try {
-        const response = await fetch('/api/subdivide-step', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': geminiApiKey || ''
-          },
-          body: JSON.stringify({
-            parentStep: parentStepText,
-            taskContext: task,
-            stepNumber: stepIdx + 1
-          })
-        });
-        const data = await response.json();
+        const data = await subdivideStepUniversal(parentStepText, task, stepIdx + 1, geminiApiKey);
 
         if (data.subSteps && Array.isArray(data.subSteps)) {
           setSteps(prevSteps => {
@@ -420,15 +436,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const currentMsgs = [...chatMessages, { role: 'user', content: userMsg }];
       const payloadMsgs = [sysMsg, ...currentMsgs.map(m => ({ role: m.role, content: m.content }))];
 
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ messages: payloadMsgs })
-      });
-      const data = await response.json();
+      const data = await chatUniversal(payloadMsgs, geminiApiKey);
 
       const replyText = typeof data.reply === 'string' ? data.reply : "⚠️ Error de decodificación neuronal.";
 
@@ -465,15 +473,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       try {
         const sysMsg = { role: 'system', content: info };
         const currentMsgs = chatMessages.map(m => ({ role: m.role, content: m.content }));
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': geminiApiKey || ''
-          },
-          body: JSON.stringify({ messages: [...currentMsgs, sysMsg] })
-        });
-        const data = await response.json();
+        const data = await chatUniversal([...currentMsgs, sysMsg], geminiApiKey);
         setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
       } catch (e) {
         console.error("Intervention error:", e);
@@ -508,15 +508,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const currentMsgs = briefingMsgs.map(m => ({ role: m.role, content: m.content }));
       const sysMsg = { role: 'system', content: `El usuario está en una entrevista de briefing para configurar sus tareas. Tarea actual: "${task}". Modo: ${workMode}. Hazle otra pregunta breve si necesitas más contexto para crear micro-pasos, o dale ánimos si ya tienes lo necesario.` };
 
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ messages: [sysMsg, ...currentMsgs, { role: 'user', content: userMsg }] })
-      });
-      const data = await response.json();
+      const data = await chatUniversal([sysMsg, ...currentMsgs, { role: 'user', content: userMsg }], geminiApiKey);
       setBriefingMsgs(prev => [...prev, { role: 'assistant', content: data.reply }]);
     } catch (err) {
       console.error("Briefing chat error:", err);
@@ -530,15 +522,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     const contextStr = briefingMsgs.map(m => `${m.role === 'user' ? 'Usuario' : 'IA'}: ${m.content}`).join('\n');
 
     try {
-      const response = await fetch('/api/split-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ task, context: contextStr }),
-      });
-      const data = await response.json();
+      const data = await splitTaskUniversal(task, contextStr, geminiApiKey);
 
       if (data.steps && Array.isArray(data.steps)) {
         const cleanSteps = data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').trim());
@@ -727,7 +711,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const now = Date.now();
       const metrics = metricsRef.current;
 
-      // Fase de Calibración (15 segundos)
+      // Fase de Calibración Continua (10 segundos para afinar datos basales sin bloquear la interfaz)
       if (!metrics.calibration_start) {
         metrics.calibration_start = now;
         metrics.calib_frames = 0;
@@ -737,7 +721,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         metrics.calib_pitch_sum = 0;
         metrics.stress_events = [];
       }
-      const isCalibrating = (now - metrics.calibration_start) < 15000;
+      const isCalibrating = (now - metrics.calibration_start) < 10000;
 
       // --- EXTRACCIÓN DE MALLA (PDEF) ---
       const pI = faces[468] || faces[159]; // Pupila/Ojo Izquierdo
@@ -862,18 +846,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
           shoulderAngle = Math.abs((rad * 180) / Math.PI);
         }
 
-        // 3. MAR (Mouth Aspect Ratio) — Detección de bostezos y fatiga extrema
-        const mouthTop = faces[13];
-        const mouthBottom = faces[14];
-        const mouthLeft = faces[61];
-        const mouthRight = faces[291];
-        const mouthHeight = mouthTop && mouthBottom
-          ? Math.hypot(mouthTop.x - mouthBottom.x, mouthTop.y - mouthBottom.y)
-          : 0;
-        const mouthWidth = mouthLeft && mouthRight
-          ? Math.hypot(mouthLeft.x - mouthRight.x, mouthLeft.y - mouthRight.y)
-          : 0.1;
-        const MAR = mouthHeight / Math.max(0.001, mouthWidth);
+        // 3. MAR (Mouth Aspect Ratio) — Ignorado temporalmente para evitar volatilidad al hablar o mover la boca
+        const MAR = 0.02; // Valor neutro constante
 
         // 4. Roll (Inclinación Lateral de Cabeza) — Detecta apoyo en manos y fatiga postural
         const rollRad = Math.atan2(faces[263].y - faces[33].y, faces[263].x - faces[33].x);
@@ -979,8 +953,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         const targetFocus = aiResult.focusScore;
         const targetLoad = aiResult.stressLevel;
 
-        metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.85 + targetFocus * 0.15));
-        metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.85 + targetLoad * 0.15));
+        metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.94 + targetFocus * 0.06));
+        metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.94 + targetLoad * 0.06));
 
         // Emociones de la Mascota según el Estado Cognitivo de la Red Neuronal
         if (aiResult.classIndex === 1) {
@@ -1460,7 +1434,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
           </div>
         </div>
 
-        {/* 4 Switcher Tabs */}
+        {/* 3 Switcher Tabs */}
         <div className="flex items-center gap-1 bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs font-mono">
           <button
             onClick={() => setActiveView('FULL')}
@@ -1488,15 +1462,6 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
           >
             <Eye className="w-3.5 h-3.5" /> Laboratorio Biométrico
           </button>
-
-          <button
-            onClick={() => setActiveView('DATASET_EXPLORER')}
-            className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
-              activeView === 'DATASET_EXPLORER' ? 'bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20' : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Explorador CSV
-          </button>
         </div>
 
         {/* Right Status */}
@@ -1505,17 +1470,12 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         </div>
       </div>
 
-      {/* VISTA 4: EXPLORADOR DE TABLAS CSV */}
-      {activeView === 'DATASET_EXPLORER' ? (
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <CsvTableViewer />
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col lg:flex-row gap-6 items-stretch min-h-0">
-
-          {/* LEFT PANEL: VIDEO, BIOMETRICS & CHAT (Visible in FULL & BIOMETRICS_HUD) */}
-          {(activeView === 'FULL' || activeView === 'BIOMETRICS_HUD') && (
-            <div className={`flex flex-col gap-6 min-h-0 ${activeView === 'BIOMETRICS_HUD' ? 'w-full' : 'flex-1 max-w-5xl'}`}>
+      {/* MAIN WORKSPACE ROW CONTAINER */}
+      <div className="flex-1 flex flex-col lg:flex-row gap-6 items-stretch min-h-0">
+        {/* LEFT PANEL: VIDEO, BIOMETRICS & CHAT (Visible in FULL & BIOMETRICS_HUD, kept alive in CLEAN_STUDY) */}
+        <div className={`flex flex-col gap-6 min-h-0 ${
+          activeView === 'BIOMETRICS_HUD' ? 'w-full' : activeView === 'FULL' ? 'flex-1 max-w-5xl' : 'hidden'
+        }`}>
 
               {/* HUD Bars with TensorFlow.js Neural AI */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1713,24 +1673,13 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 </div>
               </div>
             </div>
-          )}
 
-          {/* RIGHT PANEL: IA MENTOR DASHBOARD (Visible in FULL & CLEAN_STUDY) */}
-          {(activeView === 'FULL' || activeView === 'CLEAN_STUDY') && (
-            <div className={`flex flex-col gap-6 lg:h-full min-h-0 ${activeView === 'CLEAN_STUDY' ? 'flex-1 max-w-4xl mx-auto w-full' : 'w-full lg:w-[450px] shrink-0'}`}>
+          {/* RIGHT PANEL: IA MENTOR DASHBOARD (Visible in FULL & CLEAN_STUDY, kept alive in BIOMETRICS_HUD) */}
+          <div className={`flex flex-col gap-6 lg:h-full min-h-0 ${
+            activeView === 'CLEAN_STUDY' ? 'flex-1 max-w-4xl mx-auto w-full' : activeView === 'FULL' ? 'w-full lg:w-[450px] shrink-0' : 'hidden'
+          }`}>
 
-              {/* Si estamos en modo Estudio Limpio, renderizar background video invisible para mantener telemetría viva */}
-              {activeView === 'CLEAN_STUDY' && (
-                <div className="hidden">
-                  <video ref={videoRef} autoPlay playsInline muted />
-                  <canvas ref={canvasRef} width={640} height={480} />
-                  <div ref={statusRef} />
-                  <div ref={focusRef} />
-                  <div ref={fatigueRef} />
-                </div>
-              )}
-
-              <div className="bg-zinc-900 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl border border-zinc-900 min-h-[500px] relative">
+            <div className="bg-zinc-900 rounded-3xl flex-1 flex flex-col overflow-hidden shadow-2xl border border-zinc-900 min-h-[500px] relative">
 
                 {/* MASSIVE REWARD OVERLAY */}
                 <AnimatePresence mode="wait">
@@ -1884,10 +1833,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 )}
               </div>
             </div>
-          )}
+          </div>
         </div>
-      )}
-    </div>
-  );
-}
+    );
+  }
 

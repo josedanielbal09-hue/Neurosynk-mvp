@@ -51,8 +51,8 @@ export class TemporalStabilityFilter {
   private currentStableClass: number = 0;
   private candidateClass: number = 0;
   private candidateStartTime: number = 0;
-  private alpha: number = 0.45; // Factor de respuesta dinámico y ágil
-  private persistenceThresholdMs: number = 400; // 400ms para reacción inmediata a movimientos
+  private alpha: number = 0.20; // Filtro pasa-bajas amortiguado para evitar volatilidad
+  private persistenceThresholdMs: number = 700; // 700ms de persistencia estable para cambios de estado
 
   public filter(rawProbs: number[]): {
     stableClassIndex: number;
