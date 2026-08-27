@@ -46,6 +46,10 @@ clinical_knowledge/
 *.zip
 *.ipynb
 *.py
+!ingesta_dataset_ventanas.py
+!test_ingesta_dataset.py
+!scripts/verify_neurosim_integrity.py
+!metadata_ingesta.json
 *.csv
 dataset_*.csv
 neurosynk-mvp-ai/public/*.csv

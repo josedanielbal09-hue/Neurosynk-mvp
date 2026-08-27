@@ -1,0 +1,56 @@
+{
+  "feature_means": [
+    0.38653841614723206,
+    0.30473944544792175,
+    0.5412687659263611,
+    0.06728687137365341,
+    0.9650092720985413,
+    0.04199090227484703,
+    0.4053131341934204,
+    0.273701012134552,
+    0.002150505082681775,
+    122.21976470947266,
+    0.0,
+    2.835489273071289
+  ],
+  "feature_stds": [
+    0.1270214021205902,
+    0.0832391083240509,
+    0.07594525068998337,
+    0.07323992252349854,
+    1.1006178855895996,
+    0.038906849920749664,
+    0.024340344592928886,
+    0.20977675914764404,
+    0.0026766243390738964,
+    35.75273895263672,
+    1.0,
+    0.19478833675384521
+  ],
+  "feature_names": [
+    "ear_mean",
+    "ear_min",
+    "yaw_mean",
+    "yaw_std",
+    "pitch_mean",
+    "pitch_std",
+    "frown_mean",
+    "nose_delta_sum",
+    "gaze_variance_mean",
+    "shoulder_angle_mean",
+    "mar_mean",
+    "roll_angle_mean"
+  ],
+  "random_seed": 42,
+  "time_steps": 10,
+  "num_features": 12,
+  "total_samples": 90,
+  "class_names": [
+    "ESTUDIO NORMAL / NEUTRO",
+    "ENFOQUE PROFUNDO (FLOW)",
+    "DISTRACCIÓN",
+    "FATIGA",
+    "SOBREESTIMULACIÓN",
+    "AGOBIO POSTURAL"
+  ]
+}
