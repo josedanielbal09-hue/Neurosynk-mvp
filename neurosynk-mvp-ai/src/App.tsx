@@ -28,6 +28,7 @@ declare global {
 }
 
 import { Avatar, FocusState } from './components/Avatar';
+import { FocusBudWidget } from './components/avatar/FocusBudWidget';
 
 export default function App() {
   const [task, setTask] = useState('');
@@ -1474,15 +1475,19 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
               {/* WORKSPACE: Camera & Quick Chat */}
               <div className="flex flex-col xl:flex-row gap-6 flex-1 min-h-0">
-                {/* Camera Viewport */}
-                <div className="relative rounded-3xl overflow-hidden bg-zinc-950 flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-0">
-                  <video ref={videoRef} className="absolute w-0 h-0 opacity-0 -z-10" autoPlay playsInline muted />
-                  <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full object-contain" />
+                {/* FocusBud Center Viewport with PiP Camera */}
+                <div className="relative rounded-3xl overflow-hidden bg-zinc-950 flex-[3] flex flex-col items-center justify-center shadow-2xl border border-zinc-900 min-h-[420px] p-4">
+                  {/* Background Video element for MediaPipe & TensorFlow.js */}
+                  <video ref={videoRef} className="absolute w-0 h-0 opacity-0 pointer-events-none" autoPlay playsInline muted />
 
-                  <div ref={statusRef} className="absolute top-4 left-4 px-4 py-2 rounded-md border font-mono text-xs tracking-wider bg-zinc-800/80 text-zinc-400 border-zinc-700 uppercase backdrop-blur-md shadow-2xl">
-                    🧠 INICIANDO RED NEURONAL TENSORFLOW.JS...
+                  {/* Diagnóstico superior del Estado Cognitivo */}
+                  <div className="absolute top-4 left-4 z-20 flex flex-col gap-1">
+                    <div ref={statusRef} className="px-3.5 py-1.5 rounded-lg border font-mono text-[11px] font-semibold tracking-wider uppercase backdrop-blur-md shadow-xl transition-all duration-300 bg-zinc-900/90 text-emerald-400 border-emerald-500/30">
+                      🧠 {aiPrediction ? `IA: ${aiPrediction.className} (${(aiPrediction.confidence * 100).toFixed(0)}%)` : 'ESTUDIO NORMAL / FLOW'}
+                    </div>
                   </div>
 
+                  {/* Recalibrar IA */}
                   <button
                     onClick={() => handleRecalibrate(false)}
                     className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-md bg-black/60 hover:bg-black/80 hover:text-green-400 border border-zinc-700/50 backdrop-blur-md font-mono text-[10px] text-zinc-300 flex items-center gap-1.5 shadow-2xl transition-all cursor-pointer uppercase tracking-wider font-semibold"
@@ -1491,14 +1496,33 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                     🔄 Recalibrar IA
                   </button>
 
-                  <div className="absolute bottom-4 left-4 flex gap-2">
-                    <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl">
-                      <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-red-500 animate-pulse'}`} /> {isPaused ? 'EN PAUSA' : 'INFERENCIA ACTIVA (TF.js 60 FPS)'}
+                  {/* PROTAGONISTA VISUAL: FocusBud Avatar Central con Bocadillo Empático */}
+                  <div className="relative z-10 flex flex-col items-center justify-center w-full h-full my-auto py-6">
+                    <FocusBudWidget
+                      state={isShowingReward || (currentStepIdx >= steps.length && steps.length > 0) ? 'CELEBRACION' : isPaused ? 'PAUSA' : avatarState}
+                      size={320}
+                    />
+                  </div>
+
+                  {/* PiP (Picture-in-Picture) de la Cámara Web en la esquina inferior derecha */}
+                  <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-1">
+                    <div className="relative w-36 sm:w-44 aspect-video rounded-2xl overflow-hidden border border-zinc-800 shadow-2xl bg-zinc-950">
+                      <canvas ref={canvasRef} width={1280} height={720} className="w-full h-full object-cover" />
+                      <div className="absolute bottom-1 right-1.5 px-1.5 py-0.5 rounded bg-black/70 font-mono text-[8px] text-zinc-400">
+                        CÁMARA PiP
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Badge de Inferencia en la esquina inferior izquierda */}
+                  <div className="absolute bottom-4 left-4 z-20 flex gap-2">
+                    <span className="px-3 py-1.5 rounded-md bg-black/70 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl border border-zinc-800">
+                      <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-emerald-500 animate-pulse'}`} /> {isPaused ? 'EN PAUSA' : 'INFERENCIA ACTIVA (TF.js)'}
                     </span>
                   </div>
 
                   {isPaused && (
-                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-20 flex items-center justify-center pointer-events-none">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] z-30 flex items-center justify-center pointer-events-none">
                       <span className="text-3xl font-black tracking-[0.3em] text-blue-400 font-mono drop-shadow-[0_0_20px_rgba(59,130,246,0.8)]">PAUSADO</span>
                     </div>
                   )}
