@@ -27,95 +27,7 @@ declare global {
   }
 }
 
-interface NeuroMascotProps {
-  expression?: 'normal' | 'blink' | 'happy';
-  size?: number;
-}
-
-function NeuroMascot({ expression = 'normal', size = 120 }: NeuroMascotProps) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 100 100"
-      className="drop-shadow-[0_0_25px_rgba(34,197,94,0.5)] transition-all duration-300"
-    >
-      {/* Cuerpo circular negro con contorno verde neón */}
-      <circle
-        cx="50"
-        cy="50"
-        r="44"
-        fill="#09090b"
-        stroke="#22c55e"
-        strokeWidth="4"
-      />
-
-      {/* Ojos expresivos minimalistas */}
-      <g>
-        {expression === 'normal' && (
-          <>
-            {/* Ojo izquierdo */}
-            <motion.ellipse
-              cx="36"
-              cy="48"
-              rx="5"
-              ry="9"
-              fill="white"
-              initial={{ scaleY: 1 }}
-              animate={{ scaleY: [1, 1, 0.1, 1, 1] }}
-              transition={{ repeat: Infinity, duration: 3, repeatDelay: 1.5 }}
-            />
-            {/* Ojo derecho */}
-            <motion.ellipse
-              cx="64"
-              cy="48"
-              rx="5"
-              ry="9"
-              fill="white"
-              initial={{ scaleY: 1 }}
-              animate={{ scaleY: [1, 1, 0.1, 1, 1] }}
-              transition={{ repeat: Infinity, duration: 3, repeatDelay: 1.5 }}
-            />
-          </>
-        )}
-        {expression === 'blink' && (
-          <>
-            <path
-              d="M 31,48 L 41,48"
-              stroke="white"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-            />
-            <path
-              d="M 59,48 L 69,48"
-              stroke="white"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-            />
-          </>
-        )}
-        {expression === 'happy' && (
-          <>
-            <path
-              d="M 31,51 Q 36,43 41,51"
-              fill="none"
-              stroke="white"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-            />
-            <path
-              d="M 59,51 Q 64,43 69,51"
-              fill="none"
-              stroke="white"
-              strokeWidth="3.5"
-              strokeLinecap="round"
-            />
-          </>
-        )}
-      </g>
-    </svg>
-  );
-}
+import { Avatar, FocusState } from './components/Avatar';
 
 export default function App() {
   const [task, setTask] = useState('');
@@ -126,7 +38,7 @@ export default function App() {
 
   const [isAppLoading, setIsAppLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
-  const [mascotExpression, setMascotExpression] = useState<'normal' | 'blink' | 'happy'>('normal');
+  const [avatarState, setAvatarState] = useState<FocusState>('ENFOQUE');
   const [proposedChange, setProposedChange] = useState<{ proposedTask: string; proposedSteps: string[] } | null>(null);
 
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
@@ -165,7 +77,7 @@ export default function App() {
         const next = prev + step;
         if (next >= 100) {
           clearInterval(timer);
-          setMascotExpression('happy');
+          setAvatarState('CELEBRACION');
           setTimeout(() => {
             setIsAppLoading(false);
           }, 300);
@@ -956,19 +868,17 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.94 + targetFocus * 0.06));
         metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.94 + targetLoad * 0.06));
 
-        // Emociones de la Mascota según el Estado Cognitivo de la Red Neuronal
-        if (aiResult.classIndex === 1) {
-          setMascotExpression('happy'); // Flow Profundo
-        } else if (aiResult.classIndex === 0) {
-          setMascotExpression('happy'); // Estudio Normal
+        // Emociones y Estados del Avatar FocusBud según la Red Neuronal
+        if (aiResult.classIndex === 1 || aiResult.classIndex === 0) {
+          setAvatarState('ENFOQUE');
         } else if (aiResult.classIndex === 2) {
-          setMascotExpression('blink'); // Distracción
-        } else if (aiResult.classIndex === 3) {
-          setMascotExpression('sleepy'); // Fatiga
-        } else if (aiResult.classIndex === 4 || aiResult.classIndex === 5) {
-          setMascotExpression('sad'); // Sobreestimulación / Agobio
+          setAvatarState('ALERTA_SUAVE');
+        } else if (aiResult.classIndex === 3 || aiResult.classIndex === 5) {
+          setAvatarState('FATIGA');
+        } else if (aiResult.classIndex === 4) {
+          setAvatarState('PARALISIS');
         } else {
-          setMascotExpression('normal');
+          setAvatarState('ENFOQUE');
         }
 
 
@@ -1260,7 +1170,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 }}
                 className="flex flex-col items-center gap-6"
               >
-                <NeuroMascot expression={mascotExpression} size={130} />
+                <Avatar state="ENFOQUE" size={130} />
 
                 <div className="flex flex-col items-center gap-1.5">
                   <span className="font-mono text-xs tracking-[0.25em] text-green-500 uppercase font-semibold animate-pulse">
@@ -1703,7 +1613,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
                 <div className="p-6 pb-4 bg-zinc-900 flex justify-between items-center z-10 shadow-sm shadow-black/20">
                   <div className="flex items-center gap-3">
-                    <NeuroMascot expression={mascotExpression} size={46} />
+                    <Avatar
+                      state={isShowingReward || (currentStepIdx >= steps.length && steps.length > 0) ? 'CELEBRACION' : isPaused ? 'PAUSA' : avatarState}
+                      size={54}
+                    />
                     <div className="flex flex-col gap-0.5">
                       <h2 className="text-white text-lg tracking-tight font-medium flex items-center gap-2">
                         Mentor IA Autónomo

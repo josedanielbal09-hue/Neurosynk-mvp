@@ -1,0 +1,72 @@
+/* FocusBud High-Performance 60 FPS Procedural CSS Animations */
+
+@keyframes focusFloat {
+  0%, 100% {
+    transform: translate3d(0, 0px, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(0, -8px, 0) rotate(0.5deg);
+  }
+}
+
+@keyframes celebrationJump {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  20% {
+    transform: translate3d(0, 4px, 0) scale(1.05, 0.92);
+  }
+  45% {
+    transform: translate3d(0, -18px, 0) scale(0.96, 1.06);
+  }
+  70% {
+    transform: translate3d(0, -4px, 0) scale(1.02, 0.98);
+  }
+  85% {
+    transform: translate3d(0, -8px, 0) scale(0.99, 1.01);
+  }
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes softAlertPulse {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  25% {
+    transform: translate3d(0, -3px, 0) rotate(-1.5deg);
+  }
+  75% {
+    transform: translate3d(0, -3px, 0) rotate(1.5deg);
+  }
+}
+
+@keyframes fatigueSink {
+  0%, 100% {
+    transform: translate3d(0, 6px, 0) scale(0.98);
+  }
+  50% {
+    transform: translate3d(0, 10px, 0) scale(0.97);
+  }
+}
+
+.animateFocus {
+  animation: focusFloat 4.2s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animateCelebration {
+  animation: celebrationJump 1.2s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+  will-change: transform;
+}
+
+.animateAlert {
+  animation: softAlertPulse 2.8s ease-in-out infinite;
+  will-change: transform;
+}
+
+.animateFatigue {
+  animation: fatigueSink 5s ease-in-out infinite;
+  will-change: transform;
+}
