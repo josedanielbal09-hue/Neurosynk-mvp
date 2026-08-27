@@ -14,16 +14,17 @@ export interface AvatarProps {
   state: FocusState;
   message?: string;
   className?: string;
+  size?: number;
 }
 
-export const Avatar: React.FC<AvatarProps> = React.memo(({ state, message, className = '' }) => {
+export const Avatar: React.FC<AvatarProps> = React.memo(({ state, message, className = '', size = 360 }) => {
   const [isBlinking, setIsBlinking] = useState<boolean>(false);
   const [currentMessage, setCurrentMessage] = useState<string>('');
 
   // 1. Selección dinámica de mensaje desde avatarConfig si no se provee por prop manual
   useEffect(() => {
-    if (message) {
-      setCurrentMessage(message);
+    if (message !== undefined) {
+      setCurrentMessage(message || '');
     } else {
       setCurrentMessage(getRandomStateMessage(state));
     }
@@ -136,7 +137,10 @@ export const Avatar: React.FC<AvatarProps> = React.memo(({ state, message, class
       )}
 
       {/* Robot Chassis Container (Animación de Flotación Procedural -5px a +5px en ciclo de 4s) */}
-      <div className="relative w-60 h-60 sm:w-72 sm:h-72 animate-breathing-float flex items-center justify-center">
+      <div
+        style={size ? { width: `${size}px`, height: `${size}px`, maxWidth: '100%' } : undefined}
+        className="relative w-full max-w-[380px] aspect-square animate-breathing-float flex items-center justify-center"
+      >
         {/* Aura Ambient Glow */}
         <div
           className={`absolute inset-2 rounded-full filter blur-3xl transition-all duration-700 pointer-events-none opacity-60 ${auraClass}`}
