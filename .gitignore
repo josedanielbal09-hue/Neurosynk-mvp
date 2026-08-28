@@ -51,6 +51,7 @@ clinical_knowledge/
 !scripts/verify_neurosim_integrity.py
 !metadata_ingesta.json
 *.csv
-dataset_*.csv
-neurosynk-mvp-ai/public/*.csv
+mlops_experiments/
+*run_mlops_experiments.ts
+
 
