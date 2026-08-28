@@ -442,6 +442,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const holisticRef = useRef<any>(null);
   const cameraRef = useRef<any>(null);
+  const lastFrameProcessTimeRef = useRef<number>(0);
 
   // HUD Stat Refs and variables
   const focusRef = useRef<HTMLDivElement>(null);
@@ -563,17 +564,17 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         }
 
         try {
-          // 1. Initialize Holistic Model
+          // 1. Inicializar Holistic en Modo Ligero (Complexity 0)
           const holistic = new window.Holistic({
             locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`,
           });
 
           holistic.setOptions({
-            modelComplexity: 1,
+            modelComplexity: 0,
             smoothLandmarks: true,
             enableSegmentation: false,
-            smoothSegmentation: true,
-            refineFaceLandmarks: true,
+            smoothSegmentation: false,
+            refineFaceLandmarks: false,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5,
           });
@@ -581,10 +582,15 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
           holistic.onResults(onResults);
           holisticRef.current = holistic;
 
-          // 2. Request Camera Natively (Solves MediaPipe Camera Utils bugs in modern browsers)
+          // 2. Solicitar cámara nativa en 640x480
           if (statusRef.current) statusRef.current.textContent = "SOLICITANDO CAMARA...";
           const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
+            video: {
+              width: { ideal: 640, max: 640 },
+              height: { ideal: 480, max: 480 },
+              frameRate: { ideal: 15, max: 20 },
+              facingMode: "user"
+            }
           });
 
           if (!isComponentMounted) {
@@ -598,7 +604,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               videoRef.current?.play();
             };
 
-            // 3. Start processing frames once video is playing
+            // 3. Procesamiento controlado de cuadros
             videoRef.current.onplaying = () => {
               if (statusRef.current) statusRef.current.textContent = "ANALIZANDO BIOMETRIA...";
 
@@ -607,13 +613,18 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               const sendToMediaPipe = async () => {
                 if (!isComponentMounted) return;
 
-                if (videoRef.current &&
+                const now = performance.now();
+
+                if (
+                  now - lastFrameProcessTimeRef.current >= 100 &&
+                  videoRef.current &&
                   videoRef.current.readyState >= 2 &&
                   videoRef.current.videoWidth > 0 &&
                   videoRef.current.videoHeight > 0 &&
                   holisticRef.current &&
-                  !isProcessing) {
-
+                  !isProcessing
+                ) {
+                  lastFrameProcessTimeRef.current = now;
                   isProcessing = true;
                   try {
                     await holisticRef.current.send({ image: videoRef.current });
@@ -658,9 +669,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         holisticRef.current.close();
         holisticRef.current = null;
       }
-    }
+    };
   }, [isStarted]);
-
   const onResults = (results: any) => {
     const canvasCtx = canvasRef.current?.getContext('2d');
     if (!canvasCtx || !canvasRef.current || !videoRef.current) return;
@@ -836,130 +846,130 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const delta = Math.min(1000, metrics.last_frame_time > 0 ? (now - metrics.last_frame_time) : 33);
       metrics.last_frame_time = now;
 
-        // 1. Cálculo de Desplazamiento Nasal (Inquietud física)
-        let noseDelta = 0;
-        if (lastNoseRef.current) {
-          noseDelta = Math.hypot(nose.x - lastNoseRef.current.x, nose.y - lastNoseRef.current.y);
-        }
-        lastNoseRef.current = { x: nose.x, y: nose.y };
-
-        // 2. Ángulo de hombros / Postura
-        let shoulderAngle = 105;
-        if (pose && pose[11] && pose[12] && pose[13]) {
-          const rad = Math.atan2(pose[13].y - pose[11].y, pose[13].x - pose[11].x) - Math.atan2(pose[12].y - pose[11].y, pose[12].x - pose[11].x);
-          shoulderAngle = Math.abs((rad * 180) / Math.PI);
-        }
-
-        // 3. Buffer rodante de 2 segundos para la Red Neuronal de TensorFlow.js
-        windowFramesRef.current.push({
-          ear: EAR,
-          yaw: yawRatio,
-          pitch: pitchRatio,
-          frown: eyebrowDist,
-          noseDelta: noseDelta,
-          gazeVar: variance,
-          shoulder: shoulderAngle,
-          t: now
-        });
-        windowFramesRef.current = windowFramesRef.current.filter(f => now - f.t <= 2000);
-
-        const wFrames = windowFramesRef.current;
-        const wCount = Math.max(1, wFrames.length);
-
-        const ears = wFrames.map(f => f.ear);
-        const yaws = wFrames.map(f => f.yaw);
-        const pitches = wFrames.map(f => f.pitch);
-        const frowns = wFrames.map(f => f.frown);
-        const gazes = wFrames.map(f => f.gazeVar);
-        const shoulders = wFrames.map(f => f.shoulder);
-
-        const earMean = ears.reduce((a, b) => a + b, 0) / wCount;
-        const earMin = Math.min(...ears);
-        const yawMean = yaws.reduce((a, b) => a + b, 0) / wCount;
-        const yawStd = Math.sqrt(yaws.reduce((sq, n) => sq + Math.pow(n - yawMean, 2), 0) / wCount);
-        const pitchMean = pitches.reduce((a, b) => a + b, 0) / wCount;
-        const pitchStd = Math.sqrt(pitches.reduce((sq, n) => sq + Math.pow(n - pitchMean, 2), 0) / wCount);
-        const frownMean = frowns.reduce((a, b) => a + b, 0) / wCount;
-        const noseDeltaSum = wFrames.reduce((a, b) => a + b.noseDelta, 0);
-        const gazeVarMean = gazes.reduce((a, b) => a + b, 0) / wCount;
-        const shoulderMean = shoulders.reduce((a, b) => a + b, 0) / wCount;
-
-        // 4. INFERENCIA CON LA RED NEURONAL ENTRENADA EN TENSORFLOW.JS (<2ms)
-        const aiResult = evaluateAIBiometrics({
-          ear_mean: earMean,
-          ear_min: earMin,
-          yaw_mean: yawMean,
-          yaw_std: yawStd,
-          pitch_mean: pitchMean,
-          pitch_std: pitchStd,
-          frown_mean: frownMean,
-          nose_delta_sum: noseDeltaSum,
-          gaze_variance_mean: gazeVarMean,
-          shoulder_angle_mean: shoulderMean
-        });
-
-        setAiPrediction(aiResult);
-
-        // Control Directo del Agente Autónomo sobre las Métricas de Enfoque y Carga
-        const pEnfoque = aiResult.probabilities[0] || 0;
-        const pDistr = aiResult.probabilities[1] || 0;
-        const pFatiga = aiResult.probabilities[2] || 0;
-        const pSobre = aiResult.probabilities[3] || 0;
-        const pAgobio = aiResult.probabilities[4] || 0;
-
-        // Barra Verde (C.L.A.P. Focus Score impulsado por la Red Neuronal):
-        if (aiResult.classIndex === 0) {
-          // Aumento suave hacia el score de la IA
-          metrics.nivel_clap = Math.min(100, metrics.nivel_clap * 0.95 + aiResult.focusScore * 0.05);
-          metrics.nivel_carga = Math.max(0, metrics.nivel_carga * 0.92);
-          setMascotExpression('happy');
-        } else if (aiResult.classIndex === 1) {
-          // Distracción detectada por la IA
-          metrics.nivel_clap = Math.max(10, metrics.nivel_clap - pDistr * 1.5);
-          metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pDistr * 0.4);
-          setMascotExpression('normal');
-        } else if (aiResult.classIndex === 2) {
-          // Fatiga detectada por la IA (ojos caídos / somnolencia)
-          metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pFatiga * 1.2);
-          metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pFatiga * 1.8);
-          setMascotExpression('blink');
-        } else if (aiResult.classIndex === 3) {
-          // Sobreestimulación motora detectada por la IA
-          metrics.nivel_clap = Math.max(15, metrics.nivel_clap - pSobre * 0.8);
-          metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pSobre * 1.5);
-          setMascotExpression('normal');
-        } else if (aiResult.classIndex === 4) {
-          // Agobio postural detectado por la IA (tensión física / brazos elevados)
-          metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pAgobio * 1.4);
-          metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pAgobio * 2.2);
-          setMascotExpression('blink');
-        }
-
-        // Subdivisión autónoma de tarea si la Red Neuronal detecta que el enfoque cayó bajo 45%
-        if (metrics.nivel_clap < 45 && !metrics.is_subdividing && !metrics.subdivided_indexes.includes(currentStepIdxRef.current)) {
-          subdivideCurrentStepRef.current(currentStepIdxRef.current);
-        }
-
-        // Intervención proactiva del Agente / Mentor IA cuando la Red Neuronal detecta sobrecarga continua
-        if ((pAgobio > 0.65 || pFatiga > 0.65 || metrics.nivel_carga > 75) && (now - metrics.last_auto_chat > 45000)) {
-          metrics.last_auto_chat = now;
-          const symptom = pAgobio > 0.65 
-            ? `Postura en tensión física y agobio (${(pAgobio * 100).toFixed(0)}%)` 
-            : `Fatiga ocular y somnolencia (${(pFatiga * 100).toFixed(0)}%)`;
-          
-          interventionRef.current(`[Agente Autónomo NeuroSynk]: La red neuronal detectó ${aiResult.className} con ${(aiResult.confidence * 100).toFixed(0)}% de certeza. Motivo: ${symptom}. Dale al usuario un consejo empático, corto y directo para desatorarse.`);
-        }
-
-        statusMsg = `🧠 IA: ${aiResult.className} (${(aiResult.confidence * 100).toFixed(0)}%) • ${aiResult.statusMessage}`;
-        statusColor = aiResult.badgeColor;
-        statusBg = aiResult.badgeBg;
-        statusBorder = aiResult.badgeBorder;
-      } else {
-        statusMsg = "PDEF INACTIVO: ROSTRO NO DETECTADO";
-        statusColor = "text-zinc-600";
-        statusBg = "bg-zinc-800/10";
-        statusBorder = "border-zinc-800/30";
+      // 1. Cálculo de Desplazamiento Nasal (Inquietud física)
+      let noseDelta = 0;
+      if (lastNoseRef.current) {
+        noseDelta = Math.hypot(nose.x - lastNoseRef.current.x, nose.y - lastNoseRef.current.y);
       }
+      lastNoseRef.current = { x: nose.x, y: nose.y };
+
+      // 2. Ángulo de hombros / Postura
+      let shoulderAngle = 105;
+      if (pose && pose[11] && pose[12] && pose[13]) {
+        const rad = Math.atan2(pose[13].y - pose[11].y, pose[13].x - pose[11].x) - Math.atan2(pose[12].y - pose[11].y, pose[12].x - pose[11].x);
+        shoulderAngle = Math.abs((rad * 180) / Math.PI);
+      }
+
+      // 3. Buffer rodante de 2 segundos para la Red Neuronal de TensorFlow.js
+      windowFramesRef.current.push({
+        ear: EAR,
+        yaw: yawRatio,
+        pitch: pitchRatio,
+        frown: eyebrowDist,
+        noseDelta: noseDelta,
+        gazeVar: variance,
+        shoulder: shoulderAngle,
+        t: now
+      });
+      windowFramesRef.current = windowFramesRef.current.filter(f => now - f.t <= 2000);
+
+      const wFrames = windowFramesRef.current;
+      const wCount = Math.max(1, wFrames.length);
+
+      const ears = wFrames.map(f => f.ear);
+      const yaws = wFrames.map(f => f.yaw);
+      const pitches = wFrames.map(f => f.pitch);
+      const frowns = wFrames.map(f => f.frown);
+      const gazes = wFrames.map(f => f.gazeVar);
+      const shoulders = wFrames.map(f => f.shoulder);
+
+      const earMean = ears.reduce((a, b) => a + b, 0) / wCount;
+      const earMin = Math.min(...ears);
+      const yawMean = yaws.reduce((a, b) => a + b, 0) / wCount;
+      const yawStd = Math.sqrt(yaws.reduce((sq, n) => sq + Math.pow(n - yawMean, 2), 0) / wCount);
+      const pitchMean = pitches.reduce((a, b) => a + b, 0) / wCount;
+      const pitchStd = Math.sqrt(pitches.reduce((sq, n) => sq + Math.pow(n - pitchMean, 2), 0) / wCount);
+      const frownMean = frowns.reduce((a, b) => a + b, 0) / wCount;
+      const noseDeltaSum = wFrames.reduce((a, b) => a + b.noseDelta, 0);
+      const gazeVarMean = gazes.reduce((a, b) => a + b, 0) / wCount;
+      const shoulderMean = shoulders.reduce((a, b) => a + b, 0) / wCount;
+
+      // 4. INFERENCIA CON LA RED NEURONAL ENTRENADA EN TENSORFLOW.JS (<2ms)
+      const aiResult = evaluateAIBiometrics({
+        ear_mean: earMean,
+        ear_min: earMin,
+        yaw_mean: yawMean,
+        yaw_std: yawStd,
+        pitch_mean: pitchMean,
+        pitch_std: pitchStd,
+        frown_mean: frownMean,
+        nose_delta_sum: noseDeltaSum,
+        gaze_variance_mean: gazeVarMean,
+        shoulder_angle_mean: shoulderMean
+      });
+
+      setAiPrediction(aiResult);
+
+      // Control Directo del Agente Autónomo sobre las Métricas de Enfoque y Carga
+      const pEnfoque = aiResult.probabilities[0] || 0;
+      const pDistr = aiResult.probabilities[1] || 0;
+      const pFatiga = aiResult.probabilities[2] || 0;
+      const pSobre = aiResult.probabilities[3] || 0;
+      const pAgobio = aiResult.probabilities[4] || 0;
+
+      // Barra Verde (C.L.A.P. Focus Score impulsado por la Red Neuronal):
+      if (aiResult.classIndex === 0) {
+        // Aumento suave hacia el score de la IA
+        metrics.nivel_clap = Math.min(100, metrics.nivel_clap * 0.95 + aiResult.focusScore * 0.05);
+        metrics.nivel_carga = Math.max(0, metrics.nivel_carga * 0.92);
+        setMascotExpression('happy');
+      } else if (aiResult.classIndex === 1) {
+        // Distracción detectada por la IA
+        metrics.nivel_clap = Math.max(10, metrics.nivel_clap - pDistr * 1.5);
+        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pDistr * 0.4);
+        setMascotExpression('normal');
+      } else if (aiResult.classIndex === 2) {
+        // Fatiga detectada por la IA (ojos caídos / somnolencia)
+        metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pFatiga * 1.2);
+        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pFatiga * 1.8);
+        setMascotExpression('blink');
+      } else if (aiResult.classIndex === 3) {
+        // Sobreestimulación motora detectada por la IA
+        metrics.nivel_clap = Math.max(15, metrics.nivel_clap - pSobre * 0.8);
+        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pSobre * 1.5);
+        setMascotExpression('normal');
+      } else if (aiResult.classIndex === 4) {
+        // Agobio postural detectado por la IA (tensión física / brazos elevados)
+        metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pAgobio * 1.4);
+        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pAgobio * 2.2);
+        setMascotExpression('blink');
+      }
+
+      // Subdivisión autónoma de tarea si la Red Neuronal detecta que el enfoque cayó bajo 45%
+      if (metrics.nivel_clap < 45 && !metrics.is_subdividing && !metrics.subdivided_indexes.includes(currentStepIdxRef.current)) {
+        subdivideCurrentStepRef.current(currentStepIdxRef.current);
+      }
+
+      // Intervención proactiva del Agente / Mentor IA cuando la Red Neuronal detecta sobrecarga continua
+      if ((pAgobio > 0.65 || pFatiga > 0.65 || metrics.nivel_carga > 75) && (now - metrics.last_auto_chat > 45000)) {
+        metrics.last_auto_chat = now;
+        const symptom = pAgobio > 0.65
+          ? `Postura en tensión física y agobio (${(pAgobio * 100).toFixed(0)}%)`
+          : `Fatiga ocular y somnolencia (${(pFatiga * 100).toFixed(0)}%)`;
+
+        interventionRef.current(`[Agente Autónomo NeuroSynk]: La red neuronal detectó ${aiResult.className} con ${(aiResult.confidence * 100).toFixed(0)}% de certeza. Motivo: ${symptom}. Dale al usuario un consejo empático, corto y directo para desatorarse.`);
+      }
+
+      statusMsg = `🧠 IA: ${aiResult.className} (${(aiResult.confidence * 100).toFixed(0)}%) • ${aiResult.statusMessage}`;
+      statusColor = aiResult.badgeColor;
+      statusBg = aiResult.badgeBg;
+      statusBorder = aiResult.badgeBorder;
+    } else {
+      statusMsg = "PDEF INACTIVO: ROSTRO NO DETECTADO";
+      statusColor = "text-zinc-600";
+      statusBg = "bg-zinc-800/10";
+      statusBorder = "border-zinc-800/30";
+    }
 
     // Actualización directa del DOM de las barras para rendimiento a 60 FPS
     if (focusRef.current) {
@@ -1055,7 +1065,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         <div className="fixed top-4 right-4 z-[90] flex items-center gap-3 bg-zinc-900/80 backdrop-blur-md border border-zinc-800 p-2.5 rounded-2xl shadow-2xl select-none">
           <div className="flex items-center gap-2 px-2.5">
             <div className={`w-2 h-2 rounded-full ${apiStatus === 'browser' ? 'bg-green-500 animate-pulse' :
-                apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
+              apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
               }`} />
             <span className="font-mono text-[9px] tracking-wider text-zinc-400 uppercase font-semibold">
               {apiStatus === 'browser' ? 'Enlace: Local' :
@@ -1451,8 +1461,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
             <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 no-scrollbar scroll-smooth">
               {chatMessages.map((msg, i) => (
                 <div key={i} className={`max-w-[90%] rounded-2xl px-5 py-3 text-sm leading-relaxed font-sans ${msg.role === 'user'
-                    ? 'bg-zinc-800 text-white self-end rounded-tr-sm border border-zinc-700'
-                    : 'bg-emerald-500/10 text-emerald-50 self-start rounded-tl-sm border border-emerald-500/20'
+                  ? 'bg-zinc-800 text-white self-end rounded-tr-sm border border-zinc-700'
+                  : 'bg-emerald-500/10 text-emerald-50 self-start rounded-tl-sm border border-emerald-500/20'
                   }`}>
                   {msg.content}
                 </div>
@@ -1607,10 +1617,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                       backgroundColor: { duration: 1.5, ease: "easeOut" }
                     }}
                     className={`p-5 rounded-2xl flex items-start gap-4 transition-all duration-300 ${isCurrent
-                        ? 'ring-1 ring-green-500/20'
-                        : isCompleted
-                          ? 'opacity-40 border border-zinc-900/50'
-                          : 'opacity-80 border border-zinc-800'
+                      ? 'ring-1 ring-green-500/20'
+                      : isCompleted
+                        ? 'opacity-40 border border-zinc-900/50'
+                        : 'opacity-80 border border-zinc-800'
                       }`}
                   >
                     <motion.div
