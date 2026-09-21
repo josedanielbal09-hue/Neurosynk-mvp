@@ -1,9 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck, Headphones, Volume2, Sliders } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { loadNeuroSynkBrain, evaluateAIBiometrics, AIPredictionResult } from './services/aiInference';
 import { FocusBudWidget } from './components/avatar/FocusBudWidget';
 import { FocusState } from './config/avatarConfig';
+import { getBudContextualMessage } from './utils/budMessages';
+import { brownNoise } from './utils/audioEngine';
+import { GroundingBreak } from './components/GroundingBreak';
+
 
 declare global {
   interface Window {
@@ -129,12 +133,88 @@ const mapAIPredictionToAvatarState = (className?: string): FocusState => {
   }
 };
 
+interface SurveyQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+const DEFAULT_SURVEY_QUESTIONS: SurveyQuestion[] = [
+  {
+    id: "q1",
+    question: "¿Cuánto tiempo dedicarás a esta sesión?",
+    options: [
+      "25 a 30 minutos (Sprint corto)",
+      "45 a 60 minutos (Sesión estándar)",
+      "90 a 120 minutos (Sesión profunda)"
+    ]
+  },
+  {
+    id: "q2",
+    question: "¿Qué avance tangible buscas lograr al concluir este tiempo?",
+    options: [
+      "Comprender la idea central",
+      "Resolver un ejercicio o sección",
+      "Completar una entrega formal"
+    ]
+  },
+  {
+    id: "q3",
+    question: "¿Cuál es tu nivel de familiaridad o preparación con los materiales?",
+    options: [
+      "Parto desde cero absoluto",
+      "Tengo bases y notas listas",
+      "Domino el tema, voy a producir"
+    ]
+  },
+  {
+    id: "q4",
+    question: "¿Cómo describirías tu nivel de energía y foco en este momento?",
+    options: [
+      "Alta energía y foco despejado",
+      "Energía media / neutra",
+      "Mente dispersa o fatiga inicial"
+    ]
+  },
+  {
+    id: "q5",
+    question: "¿En qué momento sueles experimentar mayor fricción o bloqueo?",
+    options: [
+      "Al romper la inercia del inicio",
+      "A la mitad con la densidad técnica",
+      "Al cerrar y pulir detalles finales"
+    ]
+  }
+];
+
+type TimerMode = 'WORK' | 'SHORT_BREAK' | 'LONG_BREAK';
+
 export default function App() {
   const [task, setTask] = useState('');
   const [steps, setSteps] = useState<string[]>([]);
   const [isStarted, setIsStarted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
+
+  // Estados de la Encuesta Dinámica de Calibración de Contexto
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>([]);
+  const [surveyAnswers, setSurveyAnswers] = useState<Record<string, string>>({});
+  const [showSurvey, setShowSurvey] = useState<boolean>(false);
+  const [isSurveyLoading, setIsSurveyLoading] = useState<boolean>(false);
+
+  // Temporizador Pomodoro Adaptable
+  const [workDuration, setWorkDuration] = useState<number>(25 * 60);
+  const [breakDuration, setBreakDuration] = useState<number>(5 * 60);
+  const [timerMode, setTimerMode] = useState<TimerMode>('WORK');
+  const [timerSecondsLeft, setTimerSecondsLeft] = useState<number>(25 * 60);
+  const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
+  const [completedBlocks, setCompletedBlocks] = useState<number>(0);
+  const [totalTargetBlocks, setTotalTargetBlocks] = useState<number>(2);
+
+  // Configuración de audio
+  const [isBrownNoiseActive, setIsBrownNoiseActive] = useState<boolean>(false);
+  const [noiseVolume, setNoiseVolume] = useState<number>(0.3);
+  const [isTimerConfigOpen, setIsTimerConfigOpen] = useState<boolean>(false);
 
   const [isAppLoading, setIsAppLoading] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState(0);
@@ -368,7 +448,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     };
   }, []);
 
-  // Separate Timer logic with Pause control
+  // Separate Timer logic with Pause control (Total Session Time)
   useEffect(() => {
     let timerInterval: any;
     if (isStarted && currentStepIdx < steps.length && !isPaused) {
@@ -381,6 +461,86 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     };
   }, [isStarted, currentStepIdx, steps.length, isPaused]);
 
+  // Controles de Audio Ambiental (Ruido Marrón)
+  const toggleBrownNoise = () => {
+    if (isBrownNoiseActive) {
+      brownNoise.stop();
+      setIsBrownNoiseActive(false);
+    } else {
+      brownNoise.start(noiseVolume);
+      setIsBrownNoiseActive(true);
+    }
+  };
+
+  const handleVolumeChange = (newVol: number) => {
+    setNoiseVolume(newVol);
+    brownNoise.setVolume(newVol);
+  };
+
+  const handleSkipBreak = () => {
+    setTimerMode('WORK');
+    setTimerSecondsLeft(workDuration);
+    if (isBrownNoiseActive) {
+      brownNoise.start(noiseVolume);
+    }
+  };
+
+  const handleTriggerTestGrounding = () => {
+    // Si ya está en descanso, regresa a trabajo; si está en trabajo, activa el descanso
+    if (timerMode === 'SHORT_BREAK' || timerMode === 'LONG_BREAK') {
+      setTimerMode('WORK');
+      setTimerSecondsLeft(workDuration || 25 * 60);
+      if (isBrownNoiseActive) {
+        brownNoise.start(noiseVolume);
+      }
+    } else {
+      if (isBrownNoiseActive) {
+        brownNoise.stop();
+      }
+      setTimerMode('SHORT_BREAK');
+      setTimerSecondsLeft(breakDuration || 5 * 60);
+    }
+  };
+
+  // Ciclo del Temporizador Pomodoro Adaptable
+  useEffect(() => {
+    let timerInterval: any = null;
+    if (isStarted && isTimerRunning && !isPaused) {
+      timerInterval = setInterval(() => {
+        setTimerSecondsLeft(prev => {
+          if (prev <= 1) {
+            // Cambio de modo al llegar a 0
+            if (timerMode === 'WORK') {
+              setCompletedBlocks(c => c + 1);
+              if (isBrownNoiseActive) {
+                brownNoise.stop();
+              }
+              setTimerMode('SHORT_BREAK');
+              return breakDuration;
+            } else {
+              setTimerMode('WORK');
+              if (isBrownNoiseActive) {
+                brownNoise.start(noiseVolume);
+              }
+              return workDuration;
+            }
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => {
+      if (timerInterval) clearInterval(timerInterval);
+    };
+  }, [isStarted, isTimerRunning, isPaused, timerMode, workDuration, breakDuration, isBrownNoiseActive, noiseVolume]);
+
+  // Detener audio al desmontar
+  useEffect(() => {
+    return () => {
+      brownNoise.stop();
+    };
+  }, []);
+
   // UX states for Micro-rewards
   const [elapsedTime, setElapsedTime] = useState(0);
   const [rewardKaomoji, setRewardKaomoji] = useState('');
@@ -391,6 +551,54 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     setIsStateLocked(isShowingReward);
   }, [isShowingReward]);
   const KAOMOJIS = ["(๑˃̵ᴗ˂̵)و 🚀", "✨ ESTELAR ✨", "🌸 FLUIDO 🌸", "🔥 ¡FUEGO! 🔥", "(ง'̀-'́)ง ⚡️"];
+
+  // Notificaciones Contextuales de FocusBud (Body Doubling - Fase 4)
+  const stepDistractionsRef = useRef<number>(0);
+  const prevAvatarStateRef = useRef<FocusState>('ENFOQUE');
+
+  const isBreakActive = timerMode === 'SHORT_BREAK' || timerMode === 'LONG_BREAK';
+
+  const currentFocusState: FocusState = (isBreakActive || isPaused)
+    ? 'PAUSA'
+    : isStateLocked
+    ? 'CELEBRACION'
+    : mapAIPredictionToAvatarState(aiPrediction?.className);
+
+  // Estado biométrico directo emitido por la Red Neuronal (ej. 'AGOBIO POSTURAL', 'SOBREESTIMULACIÓN', 'ENFOQUE')
+  const rawAIState = (isBreakActive || isPaused)
+    ? 'PAUSA'
+    : isStateLocked
+    ? 'CELEBRACION'
+    : (aiPrediction?.className || 'ENFOQUE');
+
+  const currentActiveStep = steps[currentStepIdx] || '';
+  const [budMessage, setBudMessage] = useState<string>(() =>
+    getBudContextualMessage('ENFOQUE', { stepText: '', distractionCount: 0 })
+  );
+
+  useEffect(() => {
+    if (isBreakActive) {
+      setBudMessage("Buen trabajo. Terminamos este bloque. Toca descansar un poco.");
+      return;
+    }
+
+    if (currentFocusState === 'ALERTA_SUAVE' && prevAvatarStateRef.current !== 'ALERTA_SUAVE') {
+      stepDistractionsRef.current += 1;
+    }
+    prevAvatarStateRef.current = currentFocusState;
+
+    const msg = getBudContextualMessage(rawAIState, {
+      stepText: currentActiveStep,
+      distractionCount: stepDistractionsRef.current
+    });
+    setBudMessage(msg);
+  }, [rawAIState, currentFocusState, currentStepIdx, steps, currentActiveStep, isBreakActive]);
+
+  // Reiniciar contador de distracciones al cambiar o completar un paso
+  useEffect(() => {
+    stepDistractionsRef.current = 0;
+  }, [currentStepIdx]);
+
 
 
 
@@ -407,20 +615,18 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     setIsChatLoading(true);
 
     try {
-      const sysMsg = {
-        role: 'system',
-        content: `Contexto invisible de la sesión: El usuario está trabajando en la tarea principal "${task}". Paso actual: "${steps[currentStepIdx] || 'Ninguno'}". Modo biométrico: ${workMode.toUpperCase()}. Responde al usuario basándote estrictamente en este contexto, siendo empático, y no menciones que recibiste este contexto.`
-      };
-      const currentMsgs = [...chatMessages, { role: 'user', content: userMsg }];
-      const payloadMsgs = [sysMsg, ...currentMsgs.map(m => ({ role: m.role, content: m.content }))];
-
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-gemini-api-key': geminiApiKey || ''
         },
-        body: JSON.stringify({ messages: payloadMsgs })
+        body: JSON.stringify({
+          message: userMsg,
+          history: chatMessages.slice(-6), // últimos mensajes para contexto
+          currentStep: steps[currentStepIdx] || 'Preparación general',
+          taskContext: task || 'Estudio / Trabajo'
+        })
       });
       const data = await response.json();
 
@@ -484,11 +690,101 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     e.preventDefault();
     const finalTask = task.trim() ? task : 'Estudiar material general';
     setTask(finalTask);
+    setIsSurveyLoading(true);
 
-    setBriefingMsgs([
-      { role: 'assistant', content: `Excelente, vamos a "${finalTask}" en modo ${workMode.toUpperCase()}. Para generar pasos útiles, cuéntame más: ¿Tienes un límite de tiempo? ¿Es para la escuela, proyecto o personal?` }
-    ]);
-    setAppStage('BRIEFING');
+    try {
+      const response = await fetch('/api/task-survey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': geminiApiKey || ''
+        },
+        body: JSON.stringify({ task: finalTask })
+      });
+      const data = await response.json();
+      if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+        setSurveyQuestions(data.questions);
+      } else {
+        setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS);
+      }
+    } catch (err) {
+      console.error("Task survey fetch error:", err);
+      setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS);
+    } finally {
+      setSurveyAnswers({});
+      setShowSurvey(true);
+      setIsSurveyLoading(false);
+    }
+  };
+
+  const handleGenerateFromSurvey = async (useAnswers: boolean = true) => {
+    setIsLoading(true);
+    const answersToSend = useAnswers ? surveyAnswers : {};
+
+    try {
+      const response = await fetch('/api/split-task', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': geminiApiKey || ''
+        },
+        body: JSON.stringify({
+          task,
+          surveyAnswers: answersToSend,
+          context: `Modo de trabajo: ${workMode}, Sensibilidad: ${sensitivity}`
+        }),
+      });
+      const data = await response.json();
+
+      if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
+        const cleanSteps = data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').trim());
+        setSteps(cleanSteps);
+      } else {
+        throw new Error("Formato de respuesta incorrecto");
+      }
+    } catch (err) {
+      console.error("Error al generar ruta de trabajo:", err);
+      setSteps([
+        `DELIMITA el objetivo y alcance principal de '${task}'.`,
+        `ORGANIZA los materiales o fuentes indispensables para arrancar.`,
+        `DESARROLLA el primer bloque central con enfoque total.`,
+        `REVISA y consolida el avance realizado.`
+      ]);
+    } finally {
+      // Sincronización con la Encuesta de Duración (surveyAnswers.q1)
+      const q1Ans = surveyAnswers.q1 || '';
+      let wDur = 25 * 60;
+      let bDur = 5 * 60;
+      let targetBlocks = 2;
+
+      if (q1Ans.includes('30') || q1Ans.toLowerCase().includes('sprint')) {
+        wDur = 25 * 60;
+        bDur = 5 * 60;
+        targetBlocks = 1;
+      } else if (q1Ans.includes('60') || q1Ans.toLowerCase().includes('estándar') || q1Ans.toLowerCase().includes('estandar')) {
+        wDur = 25 * 60;
+        bDur = 5 * 60;
+        targetBlocks = 2;
+      } else if (q1Ans.includes('90') || q1Ans.includes('120') || q1Ans.toLowerCase().includes('profunda')) {
+        wDur = 45 * 60;
+        bDur = 10 * 60;
+        targetBlocks = 3;
+      }
+
+      setWorkDuration(wDur);
+      setBreakDuration(bDur);
+      setTotalTargetBlocks(targetBlocks);
+      setCompletedBlocks(0);
+      setTimerMode('WORK');
+      setTimerSecondsLeft(wDur);
+      setIsTimerRunning(true);
+
+      setCurrentStepIdx(0);
+      setIsLoading(false);
+      setShowSurvey(false);
+      setIsStarted(true);
+      setAppStage('FOCUS');
+    }
   };
 
   const handleBriefingSend = async (e: React.FormEvent) => {
@@ -544,6 +840,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     } catch (err) {
       setSteps(['Preparar material', 'Iniciar primera fase', 'Revisar progreso', 'Finalizar']);
     } finally {
+      setIsTimerRunning(true);
+      setTimerSecondsLeft(workDuration);
+      setTimerMode('WORK');
+      setCompletedBlocks(0);
       setIsLoading(false);
       setIsStarted(true);
       setAppStage('FOCUS');
@@ -1030,6 +1330,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
   const handleNextStep = () => {
     if (currentStepIdx < steps.length) {
+      stepDistractionsRef.current = 0;
       setCurrentStepIdx(c => c + 1);
       metricsRef.current.nivel_clap = 100; // Dopamine CLAP boost
       metricsRef.current.nivel_carga = Math.max(0, metricsRef.current.nivel_carga - 30); // Less stress
@@ -1061,8 +1362,42 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
   const renderGlobalSettings = () => {
     return (
       <>
-        {/* GLOBAL HEADER CONTROLS (Settings & Status) */}
+        {/* GLOBAL HEADER CONTROLS (Settings, Audio & Status) */}
         <div className="fixed top-4 right-4 z-[90] flex items-center gap-3 bg-zinc-900/80 backdrop-blur-md border border-zinc-800 p-2.5 rounded-2xl shadow-2xl select-none">
+          {/* Conmutador de Audio Ambiental (Ruido Marrón) */}
+          <div className="flex items-center gap-2 pr-2 border-r border-zinc-800">
+            <button
+              onClick={toggleBrownNoise}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-mono transition-all cursor-pointer ${
+                isBrownNoiseActive
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'bg-zinc-800/80 hover:bg-zinc-800 text-zinc-400 border border-zinc-700/50'
+              }`}
+              title={isBrownNoiseActive ? "Desactivar Ruido Marrón" : "Activar Ruido Marrón"}
+            >
+              <Headphones className={`w-3.5 h-3.5 ${isBrownNoiseActive ? 'text-amber-400 animate-pulse' : 'text-zinc-400'}`} />
+              <span className="hidden sm:inline font-semibold">Ruido Marrón:</span>
+              <span className={`font-bold ${isBrownNoiseActive ? 'text-amber-400' : 'text-zinc-500'}`}>
+                {isBrownNoiseActive ? 'ON' : 'OFF'}
+              </span>
+            </button>
+            {isBrownNoiseActive && (
+              <div className="flex items-center gap-1.5 pl-1 animate-fadeIn">
+                <Volume2 className="w-3.5 h-3.5 text-zinc-400" />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={noiseVolume}
+                  onChange={(e) => handleVolumeChange(parseFloat(e.target.value))}
+                  className="w-16 h-1.5 bg-zinc-800 accent-amber-400 rounded-lg cursor-pointer"
+                  title={`Volumen: ${Math.round(noiseVolume * 100)}%`}
+                />
+              </div>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 px-2.5">
             <div className={`w-2 h-2 rounded-full ${apiStatus === 'browser' ? 'bg-green-500 animate-pulse' :
               apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
@@ -1157,6 +1492,121 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     );
   };
 
+  if (showSurvey && !isStarted) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center font-sans tracking-tight p-4 sm:p-6 relative overflow-hidden">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="max-w-2xl w-full p-6 sm:p-8 rounded-3xl bg-zinc-900 border border-zinc-800/80 shadow-2xl flex flex-col gap-6"
+        >
+          {/* Header */}
+          <div className="flex items-start justify-between border-b border-zinc-800/80 pb-5">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/20 text-emerald-400">
+                <Sparkles className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
+                  Personalicemos tu sesión
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-400 mt-0.5">
+                  Meta: <span className="text-emerald-400 font-medium font-mono">"{task}"</span>
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowSurvey(false)}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-2.5 py-1.5 rounded-lg hover:bg-zinc-800/50 cursor-pointer"
+              title="Volver a editar meta"
+            >
+              ← Modificar meta
+            </button>
+          </div>
+
+          {/* Question List container with comfortable vertical scroll */}
+          <div className="flex flex-col gap-4 max-h-[55vh] sm:max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+            {surveyQuestions.map((q, idx) => {
+              const selectedOption = surveyAnswers[q.id];
+              return (
+                <div
+                  key={q.id || idx}
+                  className="p-4 rounded-2xl bg-zinc-950/60 border border-zinc-800/60 hover:border-zinc-700/60 transition-colors flex flex-col gap-3"
+                >
+                  <div className="flex items-start gap-3">
+                    <span className="w-6 h-6 shrink-0 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold flex items-center justify-center mt-0.5">
+                      {idx + 1}
+                    </span>
+                    <p className="text-sm font-medium text-zinc-100 leading-snug">
+                      {q.question}
+                    </p>
+                  </div>
+
+                  {/* Options as pill/card buttons */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:pl-9">
+                    {q.options.map((opt, oIdx) => {
+                      const isSelected = selectedOption === opt;
+                      return (
+                        <button
+                          key={oIdx}
+                          type="button"
+                          onClick={() => setSurveyAnswers(prev => ({ ...prev, [q.id]: opt }))}
+                          className={`px-3 py-2.5 rounded-xl border text-xs text-left transition-all duration-200 cursor-pointer flex items-center justify-between gap-2 ${
+                            isSelected
+                              ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.15)] font-medium ring-1 ring-emerald-500/50'
+                              : 'bg-zinc-900/80 border-zinc-800 text-zinc-400 hover:border-zinc-700 hover:text-zinc-200 hover:bg-zinc-850'
+                          }`}
+                        >
+                          <span className="leading-snug">{opt}</span>
+                          {isSelected && (
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800/80">
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={() => handleGenerateFromSurvey(true)}
+              className="w-full py-4 px-6 bg-gradient-to-r from-emerald-500 to-green-600 hover:from-emerald-400 hover:to-green-500 text-zinc-950 font-bold rounded-2xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 text-sm sm:text-base cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+            >
+              {isLoading ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
+                  <span>Generando ruta adaptada...</span>
+                </>
+              ) : (
+                <>
+                  GENERAR RUTA DE TRABAJO 🚀
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              disabled={isLoading}
+              onClick={() => handleGenerateFromSurvey(false)}
+              className="w-full py-2.5 text-xs sm:text-sm text-zinc-500 hover:text-zinc-300 font-medium transition-colors text-center cursor-pointer disabled:opacity-50"
+            >
+              Omitir y comenzar directo
+            </button>
+          </div>
+        </motion.div>
+        {renderGlobalSettings()}
+      </div>
+    );
+  }
+
   if (appStage === 'LOGIN') {
     return (
       <div className="min-h-screen bg-zinc-950 text-zinc-300 flex items-center justify-center font-sans tracking-tight">
@@ -1192,7 +1642,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 className="flex flex-col items-center gap-6"
               >
                 <FocusBudWidget
-                  state={isStateLocked ? 'CELEBRACION' : mapAIPredictionToAvatarState(aiPrediction?.className)}
+                  state={currentFocusState}
+                  message={budMessage}
                 />
 
                 <div className="flex flex-col items-center gap-1.5">
@@ -1232,7 +1683,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 placeholder="Ej. Estudiar material general"
                 value={task}
                 onChange={e => setTask(e.target.value)}
-                disabled={isLoading}
+                disabled={isLoading || isSurveyLoading}
               />
             </div>
 
@@ -1278,12 +1729,19 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
             <button
               type="submit"
-              disabled={isLoading}
-              className="w-full py-4 px-4 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              disabled={isLoading || isSurveyLoading}
+              className="w-full py-4 px-4 bg-white text-black font-semibold rounded-xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
             >
-              <>
-                Siguiente <ArrowRight className="w-4 h-4 fill-black inline ml-1" />
-              </>
+              {isSurveyLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                  <span>Calibrando contexto...</span>
+                </>
+              ) : (
+                <>
+                  Siguiente <ArrowRight className="w-4 h-4 fill-black inline ml-1" />
+                </>
+              )}
             </button>
             <p className="text-xs text-center text-zinc-500 font-mono">
               Requiere acceso a la cámara. Procesamiento biometría 100% local.
@@ -1425,22 +1883,35 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
             {/* Protagonista Visual: FocusBud Robot con Bocadillo Empático Estilizado */}
             <div className="relative z-10 flex flex-col items-center justify-center w-full h-full my-auto py-8">
               <FocusBudWidget
-                state={isStateLocked ? 'CELEBRACION' : mapAIPredictionToAvatarState(aiPrediction?.className)}
+                state={currentFocusState}
+                message={budMessage}
               />
             </div>
 
-            <button
-              onClick={() => handleRecalibrate(false)}
-              className="absolute top-4 right-4 z-30 px-3 py-1.5 rounded-md bg-black/60 hover:bg-black/80 hover:text-green-400 border border-zinc-700/50 backdrop-blur-md font-mono text-[10px] text-zinc-300 flex items-center gap-1.5 shadow-2xl transition-all cursor-pointer uppercase tracking-wider font-semibold"
-              title="Reiniciar calibración biométrica"
-            >
-              🔄 Recalibrar IA
-            </button>
-
-            <div className="absolute bottom-4 left-4 flex gap-2 z-20">
+            {/* Barra Inferior: Estado de Inferencia y Botón de Recalibrar */}
+            <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between gap-2 z-20 pointer-events-auto">
               <span className="px-3 py-1.5 rounded-md bg-black/60 backdrop-blur-md font-mono text-[10px] text-zinc-400 flex items-center gap-2 shadow-2xl">
                 <div className={`w-2 h-2 rounded-full ${isPaused ? 'bg-blue-500' : 'bg-red-500 animate-pulse'}`} /> {isPaused ? 'EN PAUSA' : 'INFERENCIA ACTIVA (TF.js)'}
               </span>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTriggerTestGrounding}
+                  className="px-2.5 py-1 rounded text-[10px] font-mono tracking-wider uppercase bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-400 hover:text-emerald-200 border border-emerald-800/40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="Simular descanso para probar ejercicios de grounding"
+                >
+                  <span>☕</span> {timerMode === 'SHORT_BREAK' || timerMode === 'LONG_BREAK' ? 'VOLVER AL ENFOQUE' : 'PROBAR GROUNDING'}
+                </button>
+
+                <button
+                  onClick={() => handleRecalibrate(false)}
+                  className="px-2.5 py-1 rounded text-[10px] font-mono tracking-wider uppercase bg-zinc-800/60 hover:bg-zinc-700/60 text-zinc-400 hover:text-zinc-200 border border-zinc-700/40 transition-colors flex items-center gap-1.5 cursor-pointer shadow-lg"
+                  title="Reiniciar calibración biométrica"
+                >
+                  <span>🔄</span> RECALIBRAR IA
+                </button>
+              </div>
             </div>
 
             {isPaused && (
@@ -1569,125 +2040,274 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               </div>
             </div>
             {/* Timer & Pause Controls */}
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2 relative">
               <button
                 onClick={() => setIsPaused(!isPaused)}
-                className={`flex items-center justify-center w-12 rounded-xl shadow-lg border transition-colors ${isPaused ? 'bg-blue-500 border-blue-400 text-black' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700 text-zinc-300'
+                className={`flex items-center justify-center w-10 h-10 rounded-xl shadow-lg border transition-colors cursor-pointer ${isPaused ? 'bg-blue-500 border-blue-400 text-black' : 'bg-zinc-800 border-zinc-700 hover:bg-zinc-700 text-zinc-300'
                   }`}
                 title="Pausar / Reanudar (Tecla Q)"
               >
-                {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
+                {isPaused ? <Play className="w-4 h-4 fill-current" /> : <Pause className="w-4 h-4 fill-current" />}
               </button>
-              <div className={`flex items-center gap-2 px-4 py-2 bg-black border rounded-xl transition-all ${isPaused ? 'border-zinc-800 opacity-50' : 'border-green-500/40 shadow-[0_0_20px_rgba(34,197,94,0.15)]'
-                }`}>
-                <Timer className={`w-5 h-5 ${isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse'}`} />
-                <span className={`font-mono text-xl tracking-[0.15em] font-bold ${isPaused ? 'text-zinc-600' : 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]'
+
+              {/* HUD Pomodoro con Indicador de Estado */}
+              <div className={`flex items-center gap-2 px-3 py-1.5 bg-black border rounded-xl transition-all ${
+                timerMode === 'WORK'
+                  ? isPaused ? 'border-zinc-800 opacity-60' : 'border-green-500/40 shadow-[0_0_20px_rgba(34,197,94,0.15)]'
+                  : 'border-emerald-500/50 bg-emerald-950/20 shadow-[0_0_20px_rgba(16,185,129,0.2)]'
+              }`}>
+                <div className="flex flex-col items-end leading-tight">
+                  <span className={`text-[9px] font-mono font-bold tracking-wider uppercase flex items-center gap-1 ${
+                    timerMode === 'WORK' ? 'text-green-400' : 'text-emerald-400'
                   }`}>
-                  {formatTime(elapsedTime)}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6 flex-1 overflow-y-auto no-scrollbar">
-            <div className="space-y-4">
-              {steps.map((step, i) => {
-                const isCompleted = i < currentStepIdx;
-                const isCurrent = i === currentStepIdx;
-
-                return (
-                  <motion.div
-                    key={i}
-                    layout
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={isCurrent ? {
-                      opacity: 1,
-                      x: 0,
-                      boxShadow: ["0px 0px 0px rgba(52,211,153,0)", "0px 0px 25px rgba(52,211,153,0.3)", "0px 0px 15px rgba(52,211,153,0.1)"],
-                      backgroundColor: ["rgba(24,24,27,1)", "rgba(16,185,129,0.1)", "rgba(34,197,94,0.1)"]
-                    } : {
-                      opacity: 1,
-                      x: 0,
-                      boxShadow: "0px 0px 0px rgba(52,211,153,0)",
-                      backgroundColor: isCompleted ? "rgba(24,24,27,1)" : "rgba(24,24,27,0.5)"
-                    }}
-                    transition={{
-                      delay: i * 0.1,
-                      boxShadow: { duration: 1.5, ease: "easeOut" },
-                      backgroundColor: { duration: 1.5, ease: "easeOut" }
-                    }}
-                    className={`p-5 rounded-2xl flex items-start gap-4 transition-all duration-300 ${isCurrent
-                      ? 'ring-1 ring-green-500/20'
-                      : isCompleted
-                        ? 'opacity-40 border border-zinc-900/50'
-                        : 'opacity-80 border border-zinc-800'
-                      }`}
-                  >
-                    <motion.div
-                      className="mt-0.5 min-w-6 origin-center"
-                      animate={isCurrent ? { scale: [1, 1.3, 1] } : {}}
-                      transition={{ duration: 0.6, repeat: isCurrent ? Infinity : 0, repeatDelay: 1.5 }}
-                    >
-                      {isCompleted ? (
-                        <CheckCircle className="w-6 h-6 text-zinc-600" />
-                      ) : isCurrent ? (
-                        <ArrowRight className="w-6 h-6 text-green-500" />
-                      ) : (
-                        <div className="w-6 h-6 rounded-full border-2 border-zinc-800" />
-                      )}
-                    </motion.div>
-
-                    <span className={`text-base leading-relaxed ${isCurrent ? 'text-green-50 font-semibold' : isCompleted ? 'text-zinc-600 line-through' : 'text-zinc-400'
-                      }`}>
-                      {step}
+                    {timerMode === 'WORK' ? (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                        🟢 ENFOQUE | BLOQUE {Math.min(completedBlocks + 1, totalTargetBlocks)}/{totalTargetBlocks}
+                      </>
+                    ) : (
+                      <>
+                        ☕ DESCANSO
+                      </>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <Timer className={`w-4 h-4 ${timerMode === 'WORK' ? (isPaused ? 'text-zinc-600' : 'text-green-500 animate-pulse') : 'text-emerald-400 animate-pulse'}`} />
+                    <span className={`font-mono text-lg tracking-[0.15em] font-bold ${
+                      timerMode === 'WORK'
+                        ? isPaused ? 'text-zinc-600' : 'text-green-400 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]'
+                        : 'text-emerald-300 drop-shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    }`}>
+                      {formatTime(timerSecondsLeft)}
                     </span>
-                  </motion.div>
-                )
-              })}
+                  </div>
+                </div>
 
-              {currentStepIdx >= steps.length && steps.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9, rotate: -2 }}
-                  animate={{
-                    opacity: 1,
-                    scale: 1,
-                    rotate: 0,
-                    backgroundColor: ["#ffffff", "#dcfce7", "#ffffff"]
-                  }}
-                  transition={{ duration: 1.5, ease: "easeOut" }}
-                  className="p-6 mt-8 rounded-2xl bg-white text-black text-center flex flex-col items-center gap-3 shadow-[0_0_40px_rgba(34,197,94,0.2)] relative overflow-hidden"
+                {/* Botón de configuración de bloques */}
+                <button
+                  onClick={() => setIsTimerConfigOpen(!isTimerConfigOpen)}
+                  className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 rounded-lg transition-colors cursor-pointer"
+                  title="Ajustar minutos de enfoque / descanso"
                 >
-                  <div className="absolute inset-0 bg-green-500/5 pointer-events-none" />
-                  <Target className="w-16 h-16 text-green-500 mb-2 animate-bounce" />
-                  <h3 className="font-black text-2xl tracking-tight text-center text-transparent bg-clip-text bg-gradient-to-r from-green-600 to-emerald-400">
-                    (ﾉ◕ヮ◕)ﾉ*:･ﾟ✧<br />¡Misión Cumplida!
-                  </h3>
-                  <p className="text-sm opacity-80 leading-relaxed font-mono mt-2 mb-4 font-semibold text-zinc-700">Completado en {formatTime(elapsedTime)}</p>
-                  <button
-                    onClick={() => window.location.reload()}
-                    className="w-full py-4 bg-black text-white rounded-2xl text-base font-bold hover:bg-zinc-800 transition-colors uppercase tracking-widest"
+                  <Sliders className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Popover de Ajuste Rápido Pomodoro */}
+              <AnimatePresence>
+                {isTimerConfigOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                    className="absolute right-0 top-14 z-50 bg-zinc-900/95 backdrop-blur-md border border-zinc-800 rounded-2xl p-3 shadow-2xl w-64 text-xs space-y-2 select-none"
                   >
-                    Iniciar Nueva Misión
-                  </button>
-                </motion.div>
-              )}
+                    <div className="flex justify-between items-center pb-2 border-b border-zinc-800 text-[11px] font-mono text-zinc-400 font-bold uppercase tracking-wider">
+                      <span>Calibrar Pomodoro</span>
+                      <button onClick={() => setIsTimerConfigOpen(false)} className="text-zinc-500 hover:text-zinc-300 p-0.5 cursor-pointer">✕</button>
+                    </div>
+                    <div className="space-y-1.5">
+                      <button
+                        onClick={() => {
+                          setWorkDuration(25 * 60);
+                          setBreakDuration(5 * 60);
+                          if (timerMode === 'WORK') setTimerSecondsLeft(25 * 60);
+                          else setTimerSecondsLeft(5 * 60);
+                          setIsTimerConfigOpen(false);
+                        }}
+                        className={`w-full text-left p-2.5 rounded-xl transition-colors flex justify-between items-center cursor-pointer ${
+                          workDuration === 25 * 60 && breakDuration === 5 * 60
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'hover:bg-zinc-800/80 text-zinc-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">25 min / 5 min</div>
+                          <div className="text-[10px] text-zinc-500">Pomodoro Clásico</div>
+                        </div>
+                        <span className="text-[11px] font-mono text-emerald-400 font-bold">25/5</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setWorkDuration(40 * 60);
+                          setBreakDuration(10 * 60);
+                          if (timerMode === 'WORK') setTimerSecondsLeft(40 * 60);
+                          else setTimerSecondsLeft(10 * 60);
+                          setIsTimerConfigOpen(false);
+                        }}
+                        className={`w-full text-left p-2.5 rounded-xl transition-colors flex justify-between items-center cursor-pointer ${
+                          workDuration === 40 * 60 && breakDuration === 10 * 60
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'hover:bg-zinc-800/80 text-zinc-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">40 min / 10 min</div>
+                          <div className="text-[10px] text-zinc-500">Deep Work Moderado</div>
+                        </div>
+                        <span className="text-[11px] font-mono text-cyan-400 font-bold">40/10</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setWorkDuration(50 * 60);
+                          setBreakDuration(10 * 60);
+                          if (timerMode === 'WORK') setTimerSecondsLeft(50 * 60);
+                          else setTimerSecondsLeft(10 * 60);
+                          setIsTimerConfigOpen(false);
+                        }}
+                        className={`w-full text-left p-2.5 rounded-xl transition-colors flex justify-between items-center cursor-pointer ${
+                          workDuration === 50 * 60 && breakDuration === 10 * 60
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'hover:bg-zinc-800/80 text-zinc-300'
+                        }`}
+                      >
+                        <div>
+                          <div className="font-semibold text-xs">50 min / 10 min</div>
+                          <div className="text-[10px] text-zinc-500">Sprint Extendido</div>
+                        </div>
+                        <span className="text-[11px] font-mono text-purple-400 font-bold">50/10</span>
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
 
-          {currentStepIdx < steps.length && (
-            <div className="p-6 bg-zinc-900 border-t border-zinc-800/50 z-10 relative">
-              <button
-                onClick={handleNextStep}
-                className="w-full py-5 bg-green-500 hover:bg-green-400 text-black font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden shadow-[0_0_30px_rgba(34,197,94,0.2)]"
+          <div className="p-6 flex-1 flex flex-col justify-between overflow-y-auto no-scrollbar">
+            {timerMode === 'SHORT_BREAK' || timerMode === 'LONG_BREAK' ? (
+              <GroundingBreak
+                remainingSeconds={timerSecondsLeft}
+                onSkipBreak={handleSkipBreak}
+                formatTime={formatTime}
+              />
+            ) : currentStepIdx < steps.length ? (
+              <div className="flex-1 flex flex-col justify-between">
+                {/* a) Insignia de Progreso y Barra Delgada */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-400">
+                    <span className="font-semibold tracking-wider text-zinc-300">
+                      PASO {currentStepIdx + 1} DE {steps.length}
+                    </span>
+                    <span className="text-emerald-400 font-bold">
+                      {Math.round((currentStepIdx / steps.length) * 100)}%
+                    </span>
+                  </div>
+                  <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                    <motion.div
+                      className="h-full bg-gradient-to-r from-emerald-500 to-green-400 rounded-full shadow-[0_0_10px_rgba(34,197,94,0.4)]"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${Math.min(100, Math.round((currentStepIdx / steps.length) * 100))}%` }}
+                      transition={{ duration: 0.4, ease: "easeOut" }}
+                    />
+                  </div>
+                </div>
+
+                {/* b) Tarjeta de Acción Única */}
+                <div className="my-auto py-6 flex items-center justify-center flex-1">
+                  <AnimatePresence mode="wait">
+                    {(() => {
+                      const activeStepText = steps[currentStepIdx] || '';
+                      const isSomaticPause = /^PAUSA(\s+SOMÁTICA)?/i.test(activeStepText);
+
+                      return (
+                        <motion.div
+                          key={currentStepIdx}
+                          initial={{ opacity: 0, y: 8 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -8 }}
+                          transition={{ duration: 0.25, ease: "easeOut" }}
+                          className={`w-full p-8 rounded-3xl backdrop-blur-sm flex flex-col items-center justify-center text-center relative group transition-all duration-300 ${
+                            isSomaticPause
+                              ? 'bg-gradient-to-b from-amber-950/30 via-zinc-950/90 to-zinc-950 border border-amber-500/40 shadow-[0_0_35px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/20'
+                              : 'bg-zinc-950/70 border border-zinc-800/80 shadow-2xl hover:border-emerald-500/30'
+                          }`}
+                        >
+                          {isSomaticPause ? (
+                            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] font-mono font-semibold uppercase tracking-wider mb-5 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
+                              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                              Pausa Somática / Biorregulación
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-mono font-medium uppercase tracking-wider mb-5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              Paso Activo
+                            </div>
+                          )}
+
+                          <p className={`text-xl sm:text-2xl font-semibold leading-relaxed tracking-tight max-w-md break-words select-text ${
+                            isSomaticPause ? 'text-amber-100 font-medium' : 'text-white'
+                          }`}>
+                            {activeStepText}
+                          </p>
+                        </motion.div>
+                      );
+                    })()}
+                  </AnimatePresence>
+                </div>
+
+                {/* c) Botón de Completado */}
+                {(() => {
+                  const activeStepText = steps[currentStepIdx] || '';
+                  const isSomaticPause = /^PAUSA(\s+SOMÁTICA)?/i.test(activeStepText);
+
+                  return (
+                    <div className="pt-2">
+                      <button
+                        onClick={handleNextStep}
+                        className={`w-full py-5 font-black text-lg rounded-2xl transition-all flex items-center justify-center gap-2 relative group overflow-hidden active:scale-[0.99] cursor-pointer ${
+                          isSomaticPause
+                            ? 'bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-zinc-950 shadow-[0_0_30px_rgba(245,158,11,0.25)]'
+                            : 'bg-green-500 hover:bg-green-400 text-black shadow-[0_0_30px_rgba(34,197,94,0.2)]'
+                        }`}
+                      >
+                        {isShowingReward ? "¡VAMOS!" : isSomaticPause ? "CONCLUIR PAUSA Y CONTINUAR ▶️" : "COMPLETAR PASO"}
+                        <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
+                      </button>
+                      <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-3">
+                        {isSomaticPause ? "Respira hondo y regresa cuando estés listo" : "Pulsa para recuperar dopamina"}
+                      </p>
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : steps.length > 0 ? (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+                className="my-auto p-8 rounded-3xl bg-zinc-950/80 border border-emerald-500/30 text-center flex flex-col items-center gap-4 shadow-[0_0_50px_rgba(16,185,129,0.15)] relative overflow-hidden backdrop-blur-md"
               >
-                {isShowingReward ? "¡VAMOS!" : "COMPLETAR PASO"}
-                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-out" />
-              </button>
-              <p className="text-[10px] uppercase tracking-wider font-mono text-center text-zinc-500 mt-4">
-                Pulsa para recuperar dopamina
-              </p>
-            </div>
-          )}
+                <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/10 via-transparent to-transparent pointer-events-none" />
+
+                <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-1 shadow-[0_0_25px_rgba(16,185,129,0.25)]">
+                  <Sparkles className="w-8 h-8 animate-pulse text-emerald-400" />
+                </div>
+
+                <div className="space-y-1">
+                  <h3 className="font-black text-2xl sm:text-3xl tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-green-300 to-teal-200">
+                    ¡SESIÓN COMPLETADA!
+                  </h3>
+                </div>
+
+                <p className="text-sm sm:text-base text-zinc-300 leading-relaxed font-normal max-w-xs">
+                  Has completado todos los bloques de la tarea con éxito.
+                </p>
+
+                <div className="px-4 py-2 rounded-xl bg-zinc-900/80 border border-zinc-800 font-mono text-xs text-zinc-400 flex items-center gap-2 my-1">
+                  <Timer className="w-4 h-4 text-emerald-400" />
+                  <span>Tiempo total: <strong className="text-white">{formatTime(elapsedTime)}</strong></span>
+                </div>
+
+                <button
+                  onClick={() => window.location.reload()}
+                  className="w-full mt-2 py-4 px-6 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-base rounded-2xl transition-all shadow-[0_0_30px_rgba(16,185,129,0.3)] hover:shadow-[0_0_40px_rgba(16,185,129,0.5)] active:scale-[0.99] uppercase tracking-wider flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  INICIAR NUEVA SESIÓN
+                </button>
+              </motion.div>
+            ) : null}
+          </div>
         </div>
       </div>
       {renderGlobalSettings()}

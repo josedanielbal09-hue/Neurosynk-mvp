@@ -34,6 +34,7 @@ export interface AIPredictionResult {
 let loadedModel: any = null;
 let loadedMetadata: ModelMetadata | null = null;
 let isModelLoading = false;
+let inferenceCounter = 0;
 
 export const DEFAULT_CLASS_NAMES = [
   'ENFOQUE',
@@ -128,12 +129,25 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
   });
 
   try {
-    const inputTensor = tf.tensor2d([normalized], [1, 10]);
-    const outputTensor = loadedModel.predict(inputTensor) as any;
-    const probs = Array.from(outputTensor.dataSync()) as number[];
+    // 1. Inferencia aislada estrictamente dentro de tf.tidy para erradicar fugas de memoria
+    const probs: number[] = tf.tidy(() => {
+      const inputTensor = tf.tensor2d([normalized], [1, 10]);
+      const outputTensor = loadedModel.predict(inputTensor) as any;
+      // Extrae el resultado numérico sincrónicamente con .dataSync() antes de salir del callback de tf.tidy
+      return Array.from(outputTensor.dataSync());
+    });
 
-    inputTensor.dispose();
-    outputTensor.dispose();
+    // 2. Diagnóstico de Fugas de Memoria en Consola
+    // Verificar que tf.memory().numTensors se mantenga constante y bajo (< 15 tensores)
+    inferenceCounter++;
+    if (inferenceCounter % 120 === 0 && tf.memory) {
+      const mem = tf.memory();
+      if (mem.numTensors >= 15) {
+        console.warn(`⚠️ [NeuroSynk AI Memory Warning] Tensores elevados: ${mem.numTensors} tensores activos en memoria.`);
+      } else {
+        console.debug(`🧠 [NeuroSynk AI Memory Check] Tensores activos: ${mem.numTensors} (estable < 15) | Memoria: ${(mem.numBytes / 1024).toFixed(1)} KB`);
+      }
+    }
 
     let maxProb = -1;
     let maxIdx = 0;

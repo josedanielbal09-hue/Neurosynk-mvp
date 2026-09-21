@@ -59,8 +59,8 @@ export const FocusBudWidget: React.FC<FocusBudWidgetProps> = ({
 
       {/* Bocadillo de Diálogo Estilizado de FocusBud */}
       {currentMessage && (
-        <div className="relative mb-3 z-30 animate-bubble-fadeIn pointer-events-none">
-          <div className="bg-zinc-900/90 backdrop-blur-md border border-zinc-700/60 shadow-2xl rounded-2xl px-5 py-2.5 text-xs sm:text-sm font-medium text-zinc-200 text-center max-w-xs sm:max-w-sm tracking-wide leading-relaxed">
+        <div className="relative mb-3 z-30 animate-bubble-fadeIn pointer-events-none w-full flex justify-center">
+          <div className="bg-zinc-900/90 backdrop-blur-md border border-zinc-700/60 shadow-2xl rounded-2xl px-4 py-2.5 text-xs sm:text-sm font-medium text-zinc-200 text-center w-full max-w-[92%] tracking-wide leading-relaxed">
             {currentMessage}
           </div>
           {/* Apuntador hacia la cabeza del robot */}
