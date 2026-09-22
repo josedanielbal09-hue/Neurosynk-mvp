@@ -7,6 +7,12 @@ import { FocusState } from './config/avatarConfig';
 import { getBudContextualMessage } from './utils/budMessages';
 import { brownNoise } from './utils/audioEngine';
 import { GroundingBreak } from './components/GroundingBreak';
+import {
+  chatUniversal,
+  taskSurveyUniversal,
+  splitTaskUniversal,
+  subdivideStepUniversal
+} from './services/geminiClient';
 
 
 declare global {
@@ -225,23 +231,30 @@ export default function App() {
 
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>('none');
+  const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>(() =>
+    (localStorage.getItem('gemini_api_key') || '').trim() ? 'browser' : 'none'
+  );
 
   useEffect(() => {
     const checkApiStatus = async () => {
+      const currentKey = (geminiApiKey || localStorage.getItem('gemini_api_key') || '').trim();
+      if (currentKey) {
+        setApiStatus('browser');
+        return;
+      }
       try {
         const response = await fetch('/api/api-status');
-        const data = await response.json();
-        if (localStorage.getItem('gemini_api_key')) {
-          setApiStatus('browser');
-        } else if (data.hasServerKey) {
-          setApiStatus('server');
-        } else {
-          setApiStatus('none');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.hasServerKey) {
+            setApiStatus('server');
+            return;
+          }
         }
       } catch (e) {
-        console.error("Error checking API status:", e);
+        // En Cloudflare Workers / despliegue estático no hay servidor Express
       }
+      setApiStatus('none');
     };
     checkApiStatus();
   }, [geminiApiKey]);
@@ -388,21 +401,14 @@ export default function App() {
       }]);
 
       try {
-        const response = await fetch('/api/subdivide-step', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': geminiApiKey || ''
-          },
-          body: JSON.stringify({
-            parentStep: parentStepText,
-            taskContext: task,
-            stepNumber: stepIdx + 1
-          })
-        });
-        const data = await response.json();
+        const data = await subdivideStepUniversal(
+          parentStepText,
+          task,
+          stepIdx + 1,
+          geminiApiKey
+        );
 
-        if (data.subSteps && Array.isArray(data.subSteps)) {
+        if (data.subSteps && Array.isArray(data.subSteps) && data.subSteps.length > 0) {
           setSteps(prevSteps => {
             const nextSteps = [...prevSteps];
             nextSteps.splice(stepIdx, 1, ...data.subSteps);
@@ -432,7 +438,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         metrics.is_subdividing = false;
       }
     };
-  }, [steps, task, isChatLoading]);
+  }, [steps, task, isChatLoading, geminiApiKey]);
 
   // Keyboard Listener (Q to pause)
   useEffect(() => {
@@ -621,20 +627,13 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     setIsChatLoading(true);
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({
-          message: userMsg,
-          history: chatMessages.slice(-6), // últimos mensajes para contexto
-          currentStep: steps[currentStepIdx] || 'Preparación general',
-          taskContext: task || 'Estudio / Trabajo'
-        })
-      });
-      const data = await response.json();
+      const msgsForAi = [...chatMessages, { role: 'user', content: userMsg }];
+      const data = await chatUniversal(
+        msgsForAi,
+        geminiApiKey,
+        steps[currentStepIdx] || 'Preparación general',
+        task || 'Estudio / Trabajo'
+      );
 
       const replyText = typeof data.reply === 'string' ? data.reply : "⚠️ Error de decodificación neuronal.";
 
@@ -672,23 +671,22 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       try {
         const sysMsg = { role: 'system', content: info };
         const currentMsgs = chatMessages.map(m => ({ role: m.role, content: m.content }));
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-gemini-api-key': geminiApiKey || ''
-          },
-          body: JSON.stringify({ messages: [...currentMsgs, sysMsg] })
-        });
-        const data = await response.json();
-        setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+        const data = await chatUniversal(
+          [...currentMsgs, sysMsg],
+          geminiApiKey,
+          steps[currentStepIdx] || 'Trabajo en curso',
+          task || 'General'
+        );
+        if (data.reply) {
+          setChatMessages(prev => [...prev, { role: 'assistant', content: data.reply }]);
+        }
       } catch (e) {
         console.error("Intervention error:", e);
       } finally {
         setIsChatLoading(false);
       }
     };
-  }, [chatMessages, isChatLoading, geminiApiKey]);
+  }, [chatMessages, isChatLoading, geminiApiKey, steps, currentStepIdx, task]);
 
   const isSystemBooted = useRef(false);
 
@@ -699,15 +697,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     setIsSurveyLoading(true);
 
     try {
-      const response = await fetch('/api/task-survey', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ task: finalTask })
-      });
-      const data = await response.json();
+      const data = await taskSurveyUniversal(finalTask, geminiApiKey);
       if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
         setSurveyQuestions(data.questions);
       } else {
@@ -728,19 +718,12 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     const answersToSend = useAnswers ? surveyAnswers : {};
 
     try {
-      const response = await fetch('/api/split-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({
-          task,
-          surveyAnswers: answersToSend,
-          context: `Modo de trabajo: ${workMode}, Sensibilidad: ${sensitivity}`
-        }),
-      });
-      const data = await response.json();
+      const data = await splitTaskUniversal(
+        task,
+        answersToSend,
+        `Modo de trabajo: ${workMode}, Sensibilidad: ${sensitivity}`,
+        geminiApiKey
+      );
 
       if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
         const cleanSteps = data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').trim());
@@ -805,16 +788,15 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const currentMsgs = briefingMsgs.map(m => ({ role: m.role, content: m.content }));
       const sysMsg = { role: 'system', content: `El usuario está en una entrevista de briefing para configurar sus tareas. Tarea actual: "${task}". Modo: ${workMode}. Hazle otra pregunta breve si necesitas más contexto para crear micro-pasos, o dale ánimos si ya tienes lo necesario.` };
 
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ messages: [sysMsg, ...currentMsgs, { role: 'user', content: userMsg }] })
-      });
-      const data = await response.json();
-      setBriefingMsgs(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      const data = await chatUniversal(
+        [sysMsg, ...currentMsgs, { role: 'user', content: userMsg }],
+        geminiApiKey,
+        'Briefing inicial',
+        task
+      );
+      if (data.reply) {
+        setBriefingMsgs(prev => [...prev, { role: 'assistant', content: data.reply }]);
+      }
     } catch (err) {
       console.error("Briefing chat error:", err);
     } finally {
@@ -827,15 +809,12 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
     const contextStr = briefingMsgs.map(m => `${m.role === 'user' ? 'Usuario' : 'IA'}: ${m.content}`).join('\n');
 
     try {
-      const response = await fetch('/api/split-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': geminiApiKey || ''
-        },
-        body: JSON.stringify({ task, context: contextStr }),
-      });
-      const data = await response.json();
+      const data = await splitTaskUniversal(
+        task,
+        {},
+        contextStr,
+        geminiApiKey
+      );
 
       if (data.steps && Array.isArray(data.steps)) {
         const cleanSteps = data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').trim());
@@ -1524,6 +1503,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                     onClick={() => {
                       setGeminiApiKey('');
                       localStorage.removeItem('gemini_api_key');
+                      setApiStatus('none');
                     }}
                     className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded-xl transition-colors"
                   >
