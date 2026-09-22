@@ -2,15 +2,10 @@
  * NeuroSynk AI Core - Universal Gemini Client Service
  * Soporta llamadas híbridas con detección precisa de entorno:
  * 1. En localhost: intenta primero el backend local (/api/*).
- * 2. En Cloudflare / producción estática: realiza llamada HTTPS directa a Google Generative Language API con rotación de modelos y reintento resiliente.
+ * 2. En Cloudflare / producción estática: realiza llamada HTTPS directa a Google Generative Language API con autodescubrimiento dinámico de modelos (ListModels) priorizando gemini-2.5-flash.
  */
 
-const GEMINI_MODELS = [
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-2.0-flash-exp'
-];
+let cachedModels: { key: string; models: string[] } | null = null;
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -27,6 +22,56 @@ export function sanitizeApiKey(rawKey?: string): string {
 }
 
 /**
+ * Consulta a Google la lista oficial de modelos habilitados para esta API Key específica,
+ * priorizando gemini-2.5-flash y modelos flash de baja latencia.
+ */
+export async function getAvailableModels(apiKey: string): Promise<string[]> {
+  const cleanKey = sanitizeApiKey(apiKey);
+  const fallbackList = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
+  if (!cleanKey) return fallbackList;
+
+  if (cachedModels && cachedModels.key === cleanKey && cachedModels.models.length > 0) {
+    return cachedModels.models;
+  }
+
+  try {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.models && Array.isArray(data.models)) {
+        const valid = data.models
+          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+          .map((m: any) => m.name.replace(/^models\//, ''));
+
+        if (valid.length > 0) {
+          // Ordenar con máxima prioridad a 2.5-flash, luego 2.0-flash, luego 1.5-flash
+          valid.sort((a: string, b: string) => {
+            const score = (name: string) => {
+              if (name === 'gemini-2.5-flash') return 100;
+              if (name.startsWith('gemini-2.5-flash')) return 95;
+              if (name === 'gemini-2.0-flash') return 80;
+              if (name.startsWith('gemini-2.0-flash')) return 75;
+              if (name === 'gemini-1.5-flash') return 60;
+              if (name.includes('flash')) return 50;
+              return 10;
+            };
+            return score(b) - score(a);
+          });
+
+          cachedModels = { key: cleanKey, models: valid };
+          return valid;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("[Gemini ListModels] Error al consultar modelos disponibles:", e);
+  }
+
+  return fallbackList;
+}
+
+/**
  * Prueba la conectividad directa con la API de Google Gemini y devuelve diagnóstico claro
  */
 export async function testGeminiConnection(
@@ -38,13 +83,15 @@ export async function testGeminiConnection(
   }
 
   try {
+    const models = await getAvailableModels(cleanKey);
+    const primaryModel = models[0] || 'gemini-2.5-flash';
     const text = await callGoogleGeminiDirect(
       cleanKey,
       'Responde únicamente con "Conexión activa".',
       'Test de enlace.',
       false
     );
-    return { success: true, message: `Conexión exitosa con Gemini: "${text.trim()}"` };
+    return { success: true, message: `Conexión exitosa (Modelo: ${primaryModel}): "${text.trim()}"` };
   } catch (err: any) {
     return { success: false, message: err?.message || 'Error desconocido al conectar con Google Gemini' };
   }
@@ -64,13 +111,13 @@ export async function callGoogleGeminiDirect(
     throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
+  const modelsToTry = await getAvailableModels(cleanKey);
   let lastError: any = null;
 
-  for (const model of GEMINI_MODELS) {
-    // Intentar primero con payload estándar (systemInstruction estructurado)
+  for (const model of modelsToTry) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
 
-    // Intento A: Con systemInstruction oficial
+    // Intento A: Con systemInstruction estructurado
     try {
       const payload: any = {
         contents: [
@@ -108,7 +155,7 @@ export async function callGoogleGeminiDirect(
         const errMsg = errJson?.error?.message || `HTTP ${res.status}`;
         lastError = new Error(errMsg);
 
-        // Si el error fue 400 por systemInstruction no soportado en ese tier, probar Intento B
+        // Si el error fue 400 por systemInstruction no soportado en ese modelo, probar Intento B
         if (res.status === 400 && systemInstruction) {
           const fallbackPayload: any = {
             contents: [
