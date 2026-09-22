@@ -9,13 +9,10 @@
 export const CANDIDATE_MODELS = [
   'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-3.5-flash'
+  'gemini-3-flash-preview'
 ];
 
-const storedModel = typeof window !== 'undefined' ? localStorage.getItem('gemini_confirmed_model') : null;
-let activeConfirmedModel: string = (storedModel && CANDIDATE_MODELS.includes(storedModel))
-  ? storedModel
-  : 'gemini-2.5-flash-lite';
+let activeConfirmedModel: string = 'gemini-2.5-flash-lite';
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -117,10 +114,11 @@ export async function callGoogleGeminiDirect(
     throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
-  // Priorizar inmediatamente el modelo confirmado ganador
+  // Siempre intentar en orden de velocidad y menor saturación
   const modelsToTry = [
-    activeConfirmedModel,
-    ...CANDIDATE_MODELS.filter(m => m !== activeConfirmedModel)
+    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3-flash-preview'
   ];
 
   let lastError: any = null;
@@ -148,37 +146,44 @@ export async function callGoogleGeminiDirect(
       };
     }
 
-    const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 6000);
+    // Probar hasta 2 veces por modelo si Google da 503 transitorio
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 5000);
 
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-        signal: ctrl.signal
-      });
-      clearTimeout(timeout);
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: ctrl.signal
+        });
+        clearTimeout(timeout);
 
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text && text.trim().length > 0) {
-          if (activeConfirmedModel !== model) {
+        if (res.ok) {
+          const data = await res.json();
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (text && text.trim().length > 0) {
             activeConfirmedModel = model;
             if (typeof window !== 'undefined') {
               localStorage.setItem('gemini_confirmed_model', model);
             }
+            return text;
           }
-          return text;
+        } else if (res.status === 503 && attempt === 0) {
+          // Pico transitorio de demanda en Google: esperar 400ms y reintentar
+          await new Promise(r => setTimeout(r, 400));
+          continue;
+        } else {
+          const errJson = await res.json().catch(() => ({}));
+          lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
+          break;
         }
-      } else {
-        const errJson = await res.json().catch(() => ({}));
-        lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
+      } catch (err: any) {
+        clearTimeout(timeout);
+        lastError = err;
+        break;
       }
-    } catch (err: any) {
-      clearTimeout(timeout);
-      lastError = err;
     }
   }
 
@@ -261,6 +266,13 @@ REGLAS DE FORMATO ESTRICTAS:
     return { reply: cleanReply };
   } catch (err: any) {
     console.error("[Gemini Direct Chat] Error:", err);
+    const errMsg = String(err?.message || '');
+    const isHighDemand = errMsg.toLowerCase().includes('demand') || errMsg.includes('503');
+    if (isHighDemand) {
+      return {
+        reply: `ESTAMOS listos en: "${currentStep || 'este paso'}". Continúa con la primera acción inmediata para no perder el ritmo mientras se disipa la demanda de Google.`
+      };
+    }
     return {
       reply: `⚠️ Error de Gemini API: ${err?.message || 'Error de conexión'}. Revisa tu clave en Ajustes ⚙️.`
     };
