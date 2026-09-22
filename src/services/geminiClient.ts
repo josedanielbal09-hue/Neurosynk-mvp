@@ -7,16 +7,15 @@
  */
 
 export const CANDIDATE_MODELS = [
+  'gemini-2.5-flash-lite',
   'gemini-2.5-flash',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite',
-  'gemini-3.6-flash'
+  'gemini-3.5-flash'
 ];
 
-let activeConfirmedModel: string = typeof window !== 'undefined'
-  ? (localStorage.getItem('gemini_confirmed_model') || 'gemini-2.5-flash')
-  : 'gemini-2.5-flash';
+const storedModel = typeof window !== 'undefined' ? localStorage.getItem('gemini_confirmed_model') : null;
+let activeConfirmedModel: string = (storedModel && CANDIDATE_MODELS.includes(storedModel))
+  ? storedModel
+  : 'gemini-2.5-flash-lite';
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -38,25 +37,34 @@ export function sanitizeApiKey(rawKey?: string): string {
  */
 export async function findFastestWorkingModel(apiKey: string): Promise<string> {
   const cleanKey = sanitizeApiKey(apiKey);
-  if (!cleanKey) return 'gemini-2.5-flash';
+  if (!cleanKey) return 'gemini-2.5-flash-lite';
 
   const testModel = async (model: string): Promise<string> => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: "ping" }] }]
-      })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(`[${model}] ${err?.error?.message || res.status}`);
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 4000);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "ping" }] }]
+        }),
+        signal: ctrl.signal
+      });
+      clearTimeout(timeout);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(`[${model}] ${err?.error?.message || res.status}`);
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error(`[${model}] Respuesta vacía`);
+      return model;
+    } catch (e: any) {
+      clearTimeout(timeout);
+      throw e;
     }
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error(`[${model}] Respuesta vacía`);
-    return model;
   };
 
   try {
@@ -68,7 +76,7 @@ export async function findFastestWorkingModel(apiKey: string): Promise<string> {
     return winner;
   } catch (aggErr: any) {
     console.warn("[Gemini Fast Ping] Modelos fallaron en paralelo:", aggErr?.errors);
-    return activeConfirmedModel || 'gemini-2.5-flash';
+    return 'gemini-2.5-flash-lite';
   }
 }
 
@@ -140,12 +148,17 @@ export async function callGoogleGeminiDirect(
       };
     }
 
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 6000);
+
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
       });
+      clearTimeout(timeout);
 
       if (res.ok) {
         const data = await res.json();
@@ -164,6 +177,7 @@ export async function callGoogleGeminiDirect(
         lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
       }
     } catch (err: any) {
+      clearTimeout(timeout);
       lastError = err;
     }
   }

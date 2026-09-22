@@ -1434,8 +1434,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
               }`} />
             <span className="font-mono text-[9px] tracking-wider text-zinc-400 uppercase font-semibold">
-              {apiStatus === 'browser' ? 'Enlace: Local' :
-                apiStatus === 'server' ? 'Enlace: Servidor' : 'Enlace: Offline'}
+              {apiStatus === 'browser' ? 'Gemini 2.5 Activo' :
+                apiStatus === 'server' ? 'Gemini Servidor' : 'IA Offline'}
             </span>
           </div>
           <button
@@ -1475,8 +1475,9 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Gemini API Key:</label>
                   <input
-                    type="text"
-                    style={{ WebkitTextSecurity: 'disc' } as React.CSSProperties}
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
                     placeholder="Introduce tu clave personal (AIzaSy...)..."
                     value={geminiApiKey}
                     onChange={(e) => {
@@ -1522,6 +1523,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                       const cleanKey = sanitizeApiKey(geminiApiKey);
                       try {
                         localStorage.setItem('gemini_api_key', cleanKey);
+                        localStorage.setItem('gemini_confirmed_model', 'gemini-2.5-flash-lite');
                         setApiStatus(cleanKey ? 'browser' : 'none');
                       } catch (e) {
                         console.warn("Storage warning:", e);
