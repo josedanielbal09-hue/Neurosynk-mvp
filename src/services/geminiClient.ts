@@ -1,16 +1,55 @@
 /**
  * NeuroSynk AI Core - Universal Gemini Client Service
- * Soporta llamadas híbridas:
- * 1. Intento primario a endpoints de backend local (/api/*) si están disponibles (desarrollo local).
- * 2. Conmutación automática a llamada directa HTTPS a Google Gemini API desde el navegador si no hay backend (Cloudflare Workers / Pages).
- * Modelos soportados en orden de rotación: gemini-1.5-flash -> gemini-2.0-flash -> gemini-2.5-flash.
+ * Soporta llamadas híbridas con detección precisa de entorno:
+ * 1. En localhost: intenta primero el backend local (/api/*).
+ * 2. En Cloudflare / producción estática: realiza llamada HTTPS directa a Google Generative Language API con rotación de modelos y reintento resiliente.
  */
 
 const GEMINI_MODELS = [
   'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
   'gemini-2.0-flash',
-  'gemini-2.5-flash'
+  'gemini-2.0-flash-exp',
+  'gemini-1.5-pro'
 ];
+
+/**
+ * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
+ */
+export function sanitizeApiKey(rawKey?: string): string {
+  if (!rawKey) {
+    if (typeof window !== 'undefined') {
+      rawKey = localStorage.getItem('gemini_api_key') || '';
+    } else {
+      rawKey = '';
+    }
+  }
+  return rawKey.trim().replace(/^["']|["']$/g, '');
+}
+
+/**
+ * Prueba la conectividad directa con la API de Google Gemini y devuelve diagnóstico claro
+ */
+export async function testGeminiConnection(
+  apiKey?: string
+): Promise<{ success: boolean; message: string }> {
+  const cleanKey = sanitizeApiKey(apiKey);
+  if (!cleanKey) {
+    return { success: false, message: 'La clave de API está vacía. Pega tu clave de Google AI Studio.' };
+  }
+
+  try {
+    const text = await callGoogleGeminiDirect(
+      cleanKey,
+      'Responde únicamente con "Conexión activa".',
+      'Test de enlace.',
+      false
+    );
+    return { success: true, message: `Conexión exitosa con Gemini: "${text.trim()}"` };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Error desconocido al conectar con Google Gemini' };
+  }
+}
 
 /**
  * Llamada directa a la API REST de Google Generative Language desde el navegador
@@ -21,16 +60,19 @@ export async function callGoogleGeminiDirect(
   userContent: string,
   isJson: boolean = false
 ): Promise<string> {
-  const cleanKey = (apiKey || '').trim();
+  const cleanKey = sanitizeApiKey(apiKey);
   if (!cleanKey) {
-    throw new Error("Clave de Gemini API no especificada");
+    throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
   let lastError: any = null;
 
   for (const model of GEMINI_MODELS) {
+    // Intentar primero con payload estándar (systemInstruction estructurado)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+
+    // Intento A: Con systemInstruction oficial
     try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${cleanKey}`;
       const payload: any = {
         contents: [
           {
@@ -61,19 +103,46 @@ export async function callGoogleGeminiDirect(
       if (res.ok) {
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
+        if (text && text.trim().length > 0) return text;
       } else {
         const errJson = await res.json().catch(() => ({}));
-        console.warn(`[Gemini Direct] Falló modelo ${model} (${res.status}):`, errJson);
-        lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
+        const errMsg = errJson?.error?.message || `HTTP ${res.status}`;
+        lastError = new Error(errMsg);
+
+        // Si el error fue 400 por systemInstruction no soportado en ese tier, probar Intento B
+        if (res.status === 400 && systemInstruction) {
+          const fallbackPayload: any = {
+            contents: [
+              {
+                role: "user",
+                parts: [{ text: `[INSTRUCCIONES DEL SISTEMA]\n${systemInstruction}\n\n[MENSAJE DEL USUARIO]\n${userContent}` }]
+              }
+            ]
+          };
+          if (isJson) {
+            fallbackPayload.generationConfig = { responseMimeType: "application/json" };
+          }
+          const resFallback = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(fallbackPayload)
+          });
+          if (resFallback.ok) {
+            const dataFb = await resFallback.json();
+            const textFb = dataFb.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (textFb && textFb.trim().length > 0) return textFb;
+          } else {
+            const errFb = await resFallback.json().catch(() => ({}));
+            lastError = new Error(errFb?.error?.message || errMsg);
+          }
+        }
       }
-    } catch (err) {
-      console.warn(`[Gemini Direct] Error al consultar modelo ${model}:`, err);
+    } catch (err: any) {
       lastError = err;
     }
   }
 
-  throw lastError || new Error("No se pudo conectar con los modelos de Gemini");
+  throw lastError || new Error("Google Gemini no devolvió respuesta. Verifica la validez de tu API Key.");
 }
 
 export interface ChatMessageItem {
@@ -82,7 +151,7 @@ export interface ChatMessageItem {
 }
 
 /**
- * Chat universal: Intenta backend /api/chat y conmuta a llamada directa en el navegador
+ * Chat universal: Intenta backend local solo si es localhost; de lo contrario consulta directamente a Gemini
  */
 export async function chatUniversal(
   messages: ChatMessageItem[],
@@ -91,41 +160,47 @@ export async function chatUniversal(
   taskContext: string = ''
 ): Promise<{ reply: string; proposal?: any }> {
   const userText = messages[messages.length - 1]?.content || '';
+  const cleanKey = sanitizeApiKey(apiKey);
 
-  // 1. Intentar backend local si está respondiendo
-  try {
-    const res = await fetch('/api/chat', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-api-key': apiKey || ''
-      },
-      body: JSON.stringify({
-        message: userText,
-        messages,
-        currentStep: currentStep || 'Trabajo en curso',
-        taskContext: taskContext || 'General'
-      })
-    });
+  const isLocalhost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-    if (res.ok) {
-      const data = await res.json();
-      if (typeof data.reply === 'string') {
-        return data;
+  // 1. Intentar backend local únicamente en desarrollo local
+  if (isLocalhost) {
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': cleanKey
+        },
+        body: JSON.stringify({
+          message: userText,
+          messages,
+          currentStep: currentStep || 'Trabajo en curso',
+          taskContext: taskContext || 'General'
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.reply === 'string') {
+          return data;
+        }
       }
+    } catch (e) {
+      // Continuar a llamada directa
     }
-  } catch (e) {
-    // Si no hay backend (Cloudflare Workers / 404), continuar con llamada directa
   }
 
-  // 2. Si no hay API key guardada en navegador
-  if (!apiKey) {
+  // 2. Si no hay clave
+  if (!cleanKey) {
     return {
-      reply: "CONFIGURA tu Gemini API Key en el icono ⚙️ arriba a la derecha para activar las respuestas completas del Mentor IA."
+      reply: "⚠️ No hay clave de Gemini API configurada. Abre Ajustes (⚙️ arriba a la derecha) e introduce tu clave para chatear con el Mentor."
     };
   }
 
-  // 3. Llamada directa a Gemini desde el navegador con prompt del mentor NeuroSynk
+  // 3. Llamada directa a Gemini desde el navegador
   const prompt_sistema = `Eres el Mentor de Ejecución y Co-presencia de NeuroSynk.
 Tu misión es mantener al estudiante en acción resolviendo dudas de forma quirúrgica.
 Contexto: Meta: "${taskContext || 'General'}" | Paso activo: "${currentStep || 'Trabajo en curso'}".
@@ -144,13 +219,13 @@ REGLAS DE FORMATO ESTRICTAS:
   const userContent = `Paso en pantalla: "${currentStep || 'No especificado'}"\nMensaje del usuario: "${userText}"`;
 
   try {
-    const text = await callGoogleGeminiDirect(apiKey, prompt_sistema, userContent, false);
+    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, false);
     const cleanReply = text ? text.replace(/[*_#]/g, '').trim() : "AVANZA con el primer detalle del paso. Aquí sigo contigo.";
     return { reply: cleanReply };
   } catch (err: any) {
-    console.warn("[Gemini Direct Chat] Error:", err);
+    console.error("[Gemini Direct Chat] Error:", err);
     return {
-      reply: "DIVIDE el paso en su mínima expresión. Escribe solo el primer término para arrancar."
+      reply: `⚠️ Error de Gemini API: ${err?.message || 'Error de conexión'}. Revisa tu clave en Ajustes ⚙️.`
     };
   }
 }
@@ -216,27 +291,33 @@ export async function taskSurveyUniversal(
   task: string,
   apiKey: string
 ): Promise<{ questions: SurveyQuestionItem[] }> {
-  try {
-    const res = await fetch('/api/task-survey', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-api-key': apiKey || ''
-      },
-      body: JSON.stringify({ task })
-    });
+  const cleanKey = sanitizeApiKey(apiKey);
+  const isLocalhost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
-        return data;
+  if (isLocalhost) {
+    try {
+      const res = await fetch('/api/task-survey', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': cleanKey
+        },
+        body: JSON.stringify({ task })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+          return data;
+        }
       }
+    } catch (e) {
+      // Continuar a llamada directa
     }
-  } catch (e) {
-    // Continuar a llamada directa
   }
 
-  if (!apiKey) {
+  if (!cleanKey) {
     return { questions: DEFAULT_SURVEY_QUESTIONS };
   }
 
@@ -260,7 +341,7 @@ REGLAS DE FORMATO:
 - Respuesta en formato JSON estricto con la propiedad "questions".`;
 
   try {
-    const text = await callGoogleGeminiDirect(apiKey, prompt_sistema, `Meta académica o laboral del usuario: "${task}"`, true);
+    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, `Meta académica o laboral del usuario: "${task}"`, true);
     const data = JSON.parse(text);
     if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
       return { questions: data.questions };
@@ -281,7 +362,8 @@ export async function splitTaskUniversal(
   context: string,
   apiKey: string
 ): Promise<{ steps: string[] }> {
-  // Helper fallback inteligente
+  const cleanKey = sanitizeApiKey(apiKey);
+
   const getFallbackSteps = (targetTask: string, answers: any): string[] => {
     const timeAns = String(answers?.q1 || '').toLowerCase();
     const isShort = timeAns.includes('25') || timeAns.includes('30') || timeAns.includes('sprint');
@@ -320,32 +402,36 @@ export async function splitTaskUniversal(
     ];
   };
 
-  // 1. Intentar backend local
-  try {
-    const res = await fetch('/api/split-task', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-api-key': apiKey || ''
-      },
-      body: JSON.stringify({
-        task,
-        surveyAnswers,
-        context
-      })
-    });
+  const isLocalhost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
-        return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
+  if (isLocalhost) {
+    try {
+      const res = await fetch('/api/split-task', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': cleanKey
+        },
+        body: JSON.stringify({
+          task,
+          surveyAnswers,
+          context
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
+          return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
+        }
       }
+    } catch (e) {
+      // Continuar a llamada directa
     }
-  } catch (e) {
-    // Continuar a llamada directa
   }
 
-  if (!apiKey) {
+  if (!cleanKey) {
     return { steps: getFallbackSteps(task, surveyAnswers) };
   }
 
@@ -373,7 +459,7 @@ REGLAS DE FORMATO:
   const userContent = `OBJETIVO: "${task}"\nRESPUESTAS DE LA ENCUESTA: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO ADICIONAL: "${context || 'Ninguno'}"`;
 
   try {
-    const text = await callGoogleGeminiDirect(apiKey, prompt_sistema, userContent, true);
+    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
     const data = JSON.parse(text);
     if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
       return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
@@ -394,38 +480,44 @@ export async function subdivideStepUniversal(
   stepNumber: number,
   apiKey: string
 ): Promise<{ subSteps: string[] }> {
+  const cleanKey = sanitizeApiKey(apiKey);
+
   const defaultNanoSteps = [
     "TOMA tu pluma o sitúa el cursor directamente en tu espacio de trabajo.",
     "LOCALIZA únicamente la primera línea o concepto introductorio.",
     "ESCRIBE la primera palabra clave para romper la inercia."
   ];
 
-  // 1. Intentar backend local
-  try {
-    const res = await fetch('/api/subdivide-step', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-gemini-api-key': apiKey || ''
-      },
-      body: JSON.stringify({
-        parentStep,
-        taskContext,
-        stepNumber
-      })
-    });
+  const isLocalhost = typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-    if (res.ok) {
-      const data = await res.json();
-      if (data.subSteps && Array.isArray(data.subSteps)) {
-        return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };
+  if (isLocalhost) {
+    try {
+      const res = await fetch('/api/subdivide-step', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-gemini-api-key': cleanKey
+        },
+        body: JSON.stringify({
+          parentStep,
+          taskContext,
+          stepNumber
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.subSteps && Array.isArray(data.subSteps)) {
+          return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };
+        }
       }
+    } catch (e) {
+      // Continuar a llamada directa
     }
-  } catch (e) {
-    // Continuar a llamada directa
   }
 
-  if (!apiKey) {
+  if (!cleanKey) {
     return { subSteps: defaultNanoSteps };
   }
 
@@ -447,7 +539,7 @@ REGLAS DE FORMATO:
   const userContent = `Paso bloqueado: ${parentStep}\nContexto de la tarea: ${taskContext || 'General'}`;
 
   try {
-    const text = await callGoogleGeminiDirect(apiKey, prompt_sistema, userContent, true);
+    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
     const data = JSON.parse(text);
     if (data.subSteps && Array.isArray(data.subSteps) && data.subSteps.length > 0) {
       return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };

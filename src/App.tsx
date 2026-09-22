@@ -11,7 +11,9 @@ import {
   chatUniversal,
   taskSurveyUniversal,
   splitTaskUniversal,
-  subdivideStepUniversal
+  subdivideStepUniversal,
+  testGeminiConnection,
+  sanitizeApiKey
 } from './services/geminiClient';
 
 
@@ -231,6 +233,8 @@ export default function App() {
 
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [keyTestResult, setKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>(() =>
     (localStorage.getItem('gemini_api_key') || '').trim() ? 'browser' : 'none'
   );
@@ -1473,20 +1477,49 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                   <input
                     type="text"
                     style={{ WebkitTextSecurity: 'disc' } as React.CSSProperties}
-                    placeholder="Introduce tu clave personal..."
+                    placeholder="Introduce tu clave personal (AIzaSy...)..."
                     value={geminiApiKey}
-                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    onChange={(e) => {
+                      setGeminiApiKey(e.target.value);
+                      setKeyTestResult(null);
+                    }}
                     className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-green-500 text-white placeholder-zinc-700 font-mono text-xs shadow-inner"
                   />
-                  <p className="text-[10px] text-zinc-500 leading-normal font-sans">
-                    Obtén tu clave en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>. Se guardará de forma local y privada en tu navegador.
-                  </p>
+                  <div className="flex items-center justify-between mt-1">
+                    <p className="text-[10px] text-zinc-500 leading-normal font-sans">
+                      Obtén tu clave en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>.
+                    </p>
+                    <button
+                      type="button"
+                      disabled={isTestingKey || !geminiApiKey.trim()}
+                      onClick={async () => {
+                        setIsTestingKey(true);
+                        setKeyTestResult(null);
+                        const res = await testGeminiConnection(geminiApiKey);
+                        setIsTestingKey(false);
+                        setKeyTestResult(res);
+                      }}
+                      className="text-[10px] font-mono px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-green-400 rounded-lg transition-colors disabled:opacity-40 cursor-pointer"
+                    >
+                      {isTestingKey ? 'Probando...' : '⚡ Probar Conexión'}
+                    </button>
+                  </div>
+                  {keyTestResult && (
+                    <div className={`p-2.5 rounded-xl text-xs font-mono border mt-1 ${
+                      keyTestResult.success 
+                        ? 'bg-green-500/10 border-green-500/30 text-green-400' 
+                        : 'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {keyTestResult.success ? '✅ ' : '❌ '}
+                      {keyTestResult.message}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-2 border-t border-zinc-800/80 pt-4">
                   <button
                     onClick={() => {
-                      const cleanKey = (geminiApiKey || '').trim();
+                      const cleanKey = sanitizeApiKey(geminiApiKey);
                       try {
                         localStorage.setItem('gemini_api_key', cleanKey);
                         setApiStatus(cleanKey ? 'browser' : 'none');
@@ -1504,6 +1537,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                       setGeminiApiKey('');
                       localStorage.removeItem('gemini_api_key');
                       setApiStatus('none');
+                      setKeyTestResult(null);
                     }}
                     className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded-xl transition-colors"
                   >
@@ -1512,6 +1546,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                   <button
                     onClick={() => {
                       setGeminiApiKey(localStorage.getItem('gemini_api_key') || '');
+                      setKeyTestResult(null);
                       setIsSettingsOpen(false);
                     }}
                     className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-xl transition-colors"
