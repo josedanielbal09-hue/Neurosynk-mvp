@@ -1,11 +1,20 @@
 /**
  * NeuroSynk AI Core - Universal Gemini Client Service
- * Soporta llamadas híbridas con detección precisa de entorno:
- * 1. En localhost: intenta primero el backend local (/api/*).
- * 2. En Cloudflare / producción estática: realiza llamada HTTPS directa a Google Generative Language API con autodescubrimiento dinámico de modelos (ListModels) priorizando gemini-2.5-flash.
+ * Estrategia de Carril Rápido:
+ * - Ping en paralelo (Promise.any) a los modelos candidatos (gemini-2.5-flash, gemini-2.0-flash, gemini-1.5-flash).
+ * - El primer modelo que responda queda fijado automáticamente como el modelo activo del sistema.
+ * - Timeouts agresivos de seguridad (3.5s) para garantizar que la UI nunca se quede congelada.
  */
 
-let cachedModels: { key: string; models: string[] } | null = null;
+export const CANDIDATE_MODELS = [
+  'gemini-2.5-flash',
+  'gemini-2.0-flash',
+  'gemini-1.5-flash'
+];
+
+let activeConfirmedModel: string = typeof window !== 'undefined'
+  ? (localStorage.getItem('gemini_confirmed_model') || 'gemini-2.5-flash')
+  : 'gemini-2.5-flash';
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -22,83 +31,70 @@ export function sanitizeApiKey(rawKey?: string): string {
 }
 
 /**
- * Consulta a Google la lista oficial de modelos habilitados para esta API Key específica,
- * priorizando gemini-2.5-flash y modelos flash de baja latencia.
+ * Dispara una llamada simultánea en paralelo a cada modelo de Gemini.
+ * El primero que responda con éxito es fijado como el modelo de la aplicación.
  */
-export async function getAvailableModels(apiKey: string): Promise<string[]> {
+export async function findFastestWorkingModel(apiKey: string): Promise<string> {
   const cleanKey = sanitizeApiKey(apiKey);
-  const fallbackList = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-  if (!cleanKey) return fallbackList;
+  if (!cleanKey) return 'gemini-2.5-flash';
 
-  if (cachedModels && cachedModels.key === cleanKey && cachedModels.models.length > 0) {
-    return cachedModels.models;
-  }
+  const testModel = async (model: string): Promise<string> => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "ping" }] }]
+      })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(`[${model}] ${err?.error?.message || res.status}`);
+    }
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error(`[${model}] Respuesta vacía`);
+    return model;
+  };
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(cleanKey)}`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.models && Array.isArray(data.models)) {
-        const valid = data.models
-          .filter((m: any) => Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
-          .map((m: any) => m.name.replace(/^models\//, ''));
-
-        if (valid.length > 0) {
-          // Ordenar con máxima prioridad a 2.5-flash, luego 2.0-flash, luego 1.5-flash
-          valid.sort((a: string, b: string) => {
-            const score = (name: string) => {
-              if (name === 'gemini-2.5-flash') return 100;
-              if (name.startsWith('gemini-2.5-flash')) return 95;
-              if (name === 'gemini-2.0-flash') return 80;
-              if (name.startsWith('gemini-2.0-flash')) return 75;
-              if (name === 'gemini-1.5-flash') return 60;
-              if (name.includes('flash')) return 50;
-              return 10;
-            };
-            return score(b) - score(a);
-          });
-
-          cachedModels = { key: cleanKey, models: valid };
-          return valid;
-        }
-      }
+    const winner = await Promise.any(CANDIDATE_MODELS.map(m => testModel(m)));
+    activeConfirmedModel = winner;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('gemini_confirmed_model', winner);
     }
-  } catch (e) {
-    console.warn("[Gemini ListModels] Error al consultar modelos disponibles:", e);
+    return winner;
+  } catch (aggErr: any) {
+    console.warn("[Gemini Fast Ping] Modelos fallaron en paralelo:", aggErr?.errors);
+    return activeConfirmedModel || 'gemini-2.5-flash';
   }
-
-  return fallbackList;
 }
 
 /**
- * Prueba la conectividad directa con la API de Google Gemini y devuelve diagnóstico claro
+ * Prueba la conectividad directa y encuentra el modelo más rápido en tiempo real
  */
 export async function testGeminiConnection(
   apiKey?: string
-): Promise<{ success: boolean; message: string }> {
+): Promise<{ success: boolean; message: string; model?: string }> {
   const cleanKey = sanitizeApiKey(apiKey);
   if (!cleanKey) {
     return { success: false, message: 'La clave de API está vacía. Pega tu clave de Google AI Studio.' };
   }
 
   try {
-    const models = await getAvailableModels(cleanKey);
-    const primaryModel = models[0] || 'gemini-2.5-flash';
-    const text = await callGoogleGeminiDirect(
-      cleanKey,
-      'Responde únicamente con "Conexión activa".',
-      'Test de enlace.',
-      false
-    );
-    return { success: true, message: `Conexión exitosa (Modelo: ${primaryModel}): "${text.trim()}"` };
+    const winner = await findFastestWorkingModel(cleanKey);
+    return {
+      success: true,
+      message: `Enlace establecido con éxito. Modelo activo: ${winner}`,
+      model: winner
+    };
   } catch (err: any) {
-    return { success: false, message: err?.message || 'Error desconocido al conectar con Google Gemini' };
+    return { success: false, message: err?.message || 'Error al conectar con Google Gemini' };
   }
 }
 
 /**
- * Llamada directa a la API REST de Google Generative Language desde el navegador
+ * Llamada directa ultra-rápida a Google Generative Language API
  */
 export async function callGoogleGeminiDirect(
   apiKey: string,
@@ -111,35 +107,38 @@ export async function callGoogleGeminiDirect(
     throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
-  const modelsToTry = await getAvailableModels(cleanKey);
+  // Priorizar inmediatamente el modelo confirmado ganador
+  const modelsToTry = [
+    activeConfirmedModel,
+    ...CANDIDATE_MODELS.filter(m => m !== activeConfirmedModel)
+  ];
+
   let lastError: any = null;
 
   for (const model of modelsToTry) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
 
-    // Intento A: Con systemInstruction estructurado
-    try {
-      const payload: any = {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: userContent }]
-          }
-        ]
+    // Fusión directa de instrucciones de sistema en el contenido del usuario para latencia mínima
+    const fullUserText = systemInstruction
+      ? `[INSTRUCCIONES DEL SISTEMA]\n${systemInstruction}\n\n[MENSAJE DEL USUARIO]\n${userContent}`
+      : userContent;
+
+    const payload: any = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: fullUserText }]
+        }
+      ]
+    };
+
+    if (isJson) {
+      payload.generationConfig = {
+        responseMimeType: "application/json"
       };
+    }
 
-      if (systemInstruction) {
-        payload.systemInstruction = {
-          parts: [{ text: systemInstruction }]
-        };
-      }
-
-      if (isJson) {
-        payload.generationConfig = {
-          responseMimeType: "application/json"
-        };
-      }
-
+    try {
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -149,46 +148,25 @@ export async function callGoogleGeminiDirect(
       if (res.ok) {
         const data = await res.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text && text.trim().length > 0) return text;
+        if (text && text.trim().length > 0) {
+          if (activeConfirmedModel !== model) {
+            activeConfirmedModel = model;
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('gemini_confirmed_model', model);
+            }
+          }
+          return text;
+        }
       } else {
         const errJson = await res.json().catch(() => ({}));
-        const errMsg = errJson?.error?.message || `HTTP ${res.status}`;
-        lastError = new Error(errMsg);
-
-        // Si el error fue 400 por systemInstruction no soportado en ese modelo, probar Intento B
-        if (res.status === 400 && systemInstruction) {
-          const fallbackPayload: any = {
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: `[INSTRUCCIONES DEL SISTEMA]\n${systemInstruction}\n\n[MENSAJE DEL USUARIO]\n${userContent}` }]
-              }
-            ]
-          };
-          if (isJson) {
-            fallbackPayload.generationConfig = { responseMimeType: "application/json" };
-          }
-          const resFallback = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(fallbackPayload)
-          });
-          if (resFallback.ok) {
-            const dataFb = await resFallback.json();
-            const textFb = dataFb.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (textFb && textFb.trim().length > 0) return textFb;
-          } else {
-            const errFb = await resFallback.json().catch(() => ({}));
-            lastError = new Error(errFb?.error?.message || errMsg);
-          }
-        }
+        lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
       }
     } catch (err: any) {
       lastError = err;
     }
   }
 
-  throw lastError || new Error("Google Gemini no devolvió respuesta. Verifica la validez de tu API Key.");
+  throw lastError || new Error("Google Gemini no devolvió respuesta.");
 }
 
 export interface ChatMessageItem {
@@ -197,7 +175,7 @@ export interface ChatMessageItem {
 }
 
 /**
- * Chat universal: Intenta backend local solo si es localhost; de lo contrario consulta directamente a Gemini
+ * Chat universal sin esperas innecesarias
  */
 export async function chatUniversal(
   messages: ChatMessageItem[],
@@ -211,7 +189,6 @@ export async function chatUniversal(
   const isLocalhost = typeof window !== 'undefined' &&
     (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-  // 1. Intentar backend local únicamente en desarrollo local
   if (isLocalhost) {
     try {
       const res = await fetch('/api/chat', {
@@ -239,14 +216,12 @@ export async function chatUniversal(
     }
   }
 
-  // 2. Si no hay clave
   if (!cleanKey) {
     return {
       reply: "⚠️ No hay clave de Gemini API configurada. Abre Ajustes (⚙️ arriba a la derecha) e introduce tu clave para chatear con el Mentor."
     };
   }
 
-  // 3. Llamada directa a Gemini desde el navegador
   const prompt_sistema = `Eres el Mentor de Ejecución y Co-presencia de NeuroSynk.
 Tu misión es mantener al estudiante en acción resolviendo dudas de forma quirúrgica.
 Contexto: Meta: "${taskContext || 'General'}" | Paso activo: "${currentStep || 'Trabajo en curso'}".
@@ -331,38 +306,13 @@ export const DEFAULT_SURVEY_QUESTIONS: SurveyQuestionItem[] = [
 ];
 
 /**
- * Task Survey universal
+ * Task Survey universal con timeout de protección de 3.5 segundos
  */
 export async function taskSurveyUniversal(
   task: string,
   apiKey: string
 ): Promise<{ questions: SurveyQuestionItem[] }> {
   const cleanKey = sanitizeApiKey(apiKey);
-  const isLocalhost = typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
-  if (isLocalhost) {
-    try {
-      const res = await fetch('/api/task-survey', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': cleanKey
-        },
-        body: JSON.stringify({ task })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
-          return data;
-        }
-      }
-    } catch (e) {
-      // Continuar a llamada directa
-    }
-  }
-
   if (!cleanKey) {
     return { questions: DEFAULT_SURVEY_QUESTIONS };
   }
@@ -386,17 +336,27 @@ REGLAS DE FORMATO:
 - Cero suposiciones fijas o materias impuestas. Las preguntas deben nacer de la meta introducida y del perfil del usuario.
 - Respuesta en formato JSON estricto con la propiedad "questions".`;
 
-  try {
-    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, `Meta académica o laboral del usuario: "${task}"`, true);
+  const fetchSurvey = async (): Promise<{ questions: SurveyQuestionItem[] }> => {
+    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, `Meta: "${task}"`, true);
     const data = JSON.parse(text);
     if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
       return { questions: data.questions };
     }
-  } catch (err) {
-    console.warn("[Gemini Direct Task Survey] Error:", err);
-  }
+    return { questions: DEFAULT_SURVEY_QUESTIONS };
+  };
 
-  return { questions: DEFAULT_SURVEY_QUESTIONS };
+  // Timeout guard: Si tarda más de 3.5 segundos, abrir la encuesta predeterminada al instante
+  const timeoutPromise = new Promise<{ questions: SurveyQuestionItem[] }>((resolve) =>
+    setTimeout(() => {
+      resolve({ questions: DEFAULT_SURVEY_QUESTIONS });
+    }, 3500)
+  );
+
+  try {
+    return await Promise.race([fetchSurvey(), timeoutPromise]);
+  } catch (err) {
+    return { questions: DEFAULT_SURVEY_QUESTIONS };
+  }
 }
 
 /**
@@ -448,35 +408,6 @@ export async function splitTaskUniversal(
     ];
   };
 
-  const isLocalhost = typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
-  if (isLocalhost) {
-    try {
-      const res = await fetch('/api/split-task', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': cleanKey
-        },
-        body: JSON.stringify({
-          task,
-          surveyAnswers,
-          context
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
-          return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
-        }
-      }
-    } catch (e) {
-      // Continuar a llamada directa
-    }
-  }
-
   if (!cleanKey) {
     return { steps: getFallbackSteps(task, surveyAnswers) };
   }
@@ -486,35 +417,37 @@ Tu misión es diseñar una sesión de trabajo realista basada en las respuestas 
 
 LÓGICA DE PLANIFICACIÓN POR TIEMPO Y RITMO (POMODORO ADAPTATIVO):
 1. RESTRICCIÓN DE TIEMPO (Variable Reina):
-   - Sesión de ~30 min: Diseña UN SOLO bloque de enfoque concentrado en una porción atómica y alcanzable (4 a 5 micro-pasos en total). Prohibido abarcar temarios completos.
-   - Sesión de 45-60 min: Diseña DOS bloques de enfoque separados por una micro-pausa somática de 3-5 minutos (ej. 6 a 8 pasos en total, insertando un paso de PAUSA SOMÁTICA al medio).
-   - Sesión de 90-120 min: Diseña TRES bloques de enfoque intercalados con pausas breves de biorregulación y un hito final de verificación o cierre (9 a 12 pasos en total).
-
-2. INCORPORACIÓN DE PAUSAS SOMÁTICAS EN LA SECUENCIA:
-   - Cuando la sesión requiera descanso entre bloques, el paso DEBE redactarse como una instrucción activa de recuperación física (ej. "PAUSA SOMÁTICA: Despeja la vista de la pantalla, bebe agua y estira los brazos por 3 minutos.").
-
-3. CALIBRACIÓN POR CONOCIMIENTO Y ENERGÍA:
-   - Si el usuario indicó conocimiento previo bajo o parálisis/fatiga, los 2 primeros pasos deben ser de fricción ultra-baja (<60 seg) para romper la inercia.
-   - Si el usuario indicó conocimiento avanzado y alta energía, omite introducciones y enfoca los bloques directamente en la práctica compleja o redacción avanzada.
+   - Sesión de ~30 min: Diseña UN SOLO bloque de enfoque concentrado en una porción atómica y alcanzable (4 a 5 micro-pasos en total).
+   - Sesión de 45-60 min: Diseña DOS bloques de enfoque separados por una micro-pausa somática de 3-5 minutos (6 a 8 pasos en total).
+   - Sesión de 90-120 min: Diseña TRES bloques de enfoque intercalados con pausas breves de biorregulación (9 a 12 pasos en total).
 
 REGLAS DE FORMATO:
 - Cada paso debe iniciar obligatoriamente con un VERBO DE ACCIÓN EN MAYÚSCULAS (ej. IDENTIFICA, REDACTA, RESUELVE, PAUSA, VERIFICA).
 - Longitud: Entre 12 y 22 palabras por paso. Cero formato Markdown.
 - Devuelve un JSON estructurado con la propiedad "steps" (array de strings).`;
 
-  const userContent = `OBJETIVO: "${task}"\nRESPUESTAS DE LA ENCUESTA: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO ADICIONAL: "${context || 'Ninguno'}"`;
+  const userContent = `OBJETIVO: "${task}"\nRESPUESTAS: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO: "${context || 'Ninguno'}"`;
 
-  try {
+  const fetchSteps = async (): Promise<{ steps: string[] }> => {
     const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
     const data = JSON.parse(text);
     if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
       return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
     }
-  } catch (err) {
-    console.warn("[Gemini Direct Split Task] Error:", err);
-  }
+    return { steps: getFallbackSteps(task, surveyAnswers) };
+  };
 
-  return { steps: getFallbackSteps(task, surveyAnswers) };
+  const timeoutSteps = new Promise<{ steps: string[] }>((resolve) =>
+    setTimeout(() => {
+      resolve({ steps: getFallbackSteps(task, surveyAnswers) });
+    }, 4500)
+  );
+
+  try {
+    return await Promise.race([fetchSteps(), timeoutSteps]);
+  } catch (err) {
+    return { steps: getFallbackSteps(task, surveyAnswers) };
+  }
 }
 
 /**
@@ -534,35 +467,6 @@ export async function subdivideStepUniversal(
     "ESCRIBE la primera palabra clave para romper la inercia."
   ];
 
-  const isLocalhost = typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
-
-  if (isLocalhost) {
-    try {
-      const res = await fetch('/api/subdivide-step', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-gemini-api-key': cleanKey
-        },
-        body: JSON.stringify({
-          parentStep,
-          taskContext,
-          stepNumber
-        })
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.subSteps && Array.isArray(data.subSteps)) {
-          return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };
-        }
-      }
-    } catch (e) {
-      // Continuar a llamada directa
-    }
-  }
-
   if (!cleanKey) {
     return { subSteps: defaultNanoSteps };
   }
@@ -570,16 +474,9 @@ export async function subdivideStepUniversal(
   const prompt_sistema = `Eres el Rescatista Ejecutivo de NeuroSynk.
 Tu misión es recibir un paso donde el usuario experimenta bloqueo o parálisis cognitiva y fragmentarlo en exactamente 3 NANO-PASOS secuenciales de fricción cero (<60 segundos cada uno).
 
-REGLAS DE RESCATE ATÓMICO:
-1. NANO-PASO 1: Anclaje físico o de cursor (ej. TOMA tu pluma, SITÚA el cursor, ABRE el documento).
-2. NANO-PASO 2: Micro-lectura mínima (ej. LOCALIZA el primer renglón, REVISA la primera palabra).
-3. NANO-PASO 3: Registro mecánico atómico (ej. ESCRIBE una sola palabra clave, ANOTA el título).
-
 REGLAS DE FORMATO:
 - Cada nano-paso debe iniciar obligatoriamente con un VERBO DE ACCIÓN FÍSICA EN MAYÚSCULAS (ej. TOMA, LOCALIZA, ESCRIBE).
-- Longitud: Entre 8 y 16 palabras por nano-paso.
-- Cero Markdown (prohibido usar asteriscos o negritas).
-- Prohibidas las explicaciones, justificaciones o rodeos.
+- Longitud: Entre 8 y 16 palabras por nano-paso. Cero Markdown.
 - Devuelve un JSON estructurado con la clave "subSteps" conteniendo un arreglo de 3 strings.`;
 
   const userContent = `Paso bloqueado: ${parentStep}\nContexto de la tarea: ${taskContext || 'General'}`;
