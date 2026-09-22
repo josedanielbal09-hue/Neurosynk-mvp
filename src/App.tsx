@@ -1492,24 +1492,31 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Gemini API Key:</label>
                   <input
-                    type="password"
-                    placeholder="AIzaSy..."
+                    type="text"
+                    style={{ WebkitTextSecurity: 'disc' } as React.CSSProperties}
+                    placeholder="Introduce tu clave personal..."
                     value={geminiApiKey}
                     onChange={(e) => setGeminiApiKey(e.target.value)}
                     className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-green-500 text-white placeholder-zinc-700 font-mono text-xs shadow-inner"
                   />
                   <p className="text-[10px] text-zinc-500 leading-normal font-sans">
-                    Obtén tu clave gratuita en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>. Se guardará de forma local en tu navegador.
+                    Obtén tu clave en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>. Se guardará de forma local y privada en tu navegador.
                   </p>
                 </div>
 
                 <div className="flex gap-2 border-t border-zinc-800/80 pt-4">
                   <button
                     onClick={() => {
-                      localStorage.setItem('gemini_api_key', geminiApiKey);
+                      const cleanKey = (geminiApiKey || '').trim();
+                      try {
+                        localStorage.setItem('gemini_api_key', cleanKey);
+                        setApiStatus(cleanKey ? 'browser' : 'none');
+                      } catch (e) {
+                        console.warn("Storage warning:", e);
+                      }
                       setIsSettingsOpen(false);
                     }}
-                    className="flex-1 py-2.5 bg-green-500 hover:bg-green-400 text-black font-bold text-xs rounded-xl transition-colors uppercase tracking-wider"
+                    className="flex-1 py-2.5 bg-green-500 hover:bg-green-400 text-black font-bold text-xs rounded-xl transition-colors uppercase tracking-wider cursor-pointer"
                   >
                     Guardar
                   </button>
