@@ -7,7 +7,10 @@ export type FocusState =
   | 'AGOBIO_POSTURAL' 
   | 'SOBREESTIMULACION' 
   | 'CELEBRACION' 
-  | 'PAUSA';
+  | 'PAUSA'
+  | 'ESTUDIO_NORMAL_/_NEUTRO'
+  | 'ESTUDIO_NORMAL'
+  | 'ENFOQUE_PROFUNDO_(FLOW)';
 
 interface BudContext {
   stepText?: string;
@@ -79,6 +82,12 @@ export const getBudContextualMessage = (rawState: string, context: BudContext = 
       return `Aquí seguimos. Volvamos a ${target}.`;
     }
 
+    case 'ESTUDIO_NORMAL_/_NEUTRO':
+    case 'ESTUDIO_NORMAL': {
+      return `Ritmo constante y despejado. Seguimos en ${target}.`;
+    }
+
+    case 'ENFOQUE_PROFUNDO_(FLOW)':
     case 'ENFOQUE': {
       const focusTemplates = [
         `Buen ritmo. Sigamos con ${target}.`,

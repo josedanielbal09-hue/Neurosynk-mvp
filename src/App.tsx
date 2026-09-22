@@ -119,6 +119,8 @@ function NeuroMascot({ expression = 'normal', size = 120 }: NeuroMascotProps) {
 
 const mapAIPredictionToAvatarState = (className?: string): FocusState => {
   switch (className) {
+    case 'ENFOQUE PROFUNDO (FLOW)':
+    case 'ESTUDIO NORMAL / NEUTRO':
     case 'ENFOQUE':
       return 'ENFOQUE';
     case 'DISTRACCIÓN':
@@ -312,8 +314,12 @@ export default function App() {
   // Estado del Motor de Red Neuronal TensorFlow.js
   const [isAIBrainReady, setIsAIBrainReady] = useState(false);
   const [aiPrediction, setAiPrediction] = useState<AIPredictionResult | null>(null);
-  const windowFramesRef = useRef<{ ear: number; yaw: number; pitch: number; frown: number; noseDelta: number; gazeVar: number; shoulder: number; t: number }[]>([]);
+  const windowFramesRef = useRef<{ ear: number; yaw: number; pitch: number; frown: number; noseDelta: number; gazeVar: number; shoulder: number; mar: number; roll: number; t: number }[]>([]);
   const lastNoseRef = useRef<{ x: number; y: number } | null>(null);
+  const lastAiUpdateRef = useRef<number>(0);
+  const displayedClassRef = useRef<number>(0);
+  const pendingClassRef = useRef<number | null>(null);
+  const pendingClassSinceRef = useRef<number>(0);
 
   // Carga inicial del cerebro IA
   useEffect(() => {
@@ -1160,7 +1166,20 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         shoulderAngle = Math.abs((rad * 180) / Math.PI);
       }
 
-      // 3. Buffer rodante de 2 segundos para la Red Neuronal de TensorFlow.js
+      // MAR (Mouth Aspect Ratio - Detección de bostezo / fatiga somnolienta)
+      const mouthTop = faces[13];
+      const mouthBottom = faces[14];
+      const mouthLeft = faces[61] || faces[78];
+      const mouthRight = faces[291] || faces[308];
+      const mouthHeight = Math.hypot(mouthTop.x - mouthBottom.x, mouthTop.y - mouthBottom.y);
+      const mouthWidth = Math.hypot(mouthLeft.x - mouthRight.x, mouthLeft.y - mouthRight.y);
+      const MAR = mouthWidth > 0 ? mouthHeight / mouthWidth : 0.05;
+
+      // Inclinación lateral de la cabeza (Roll angle en grados)
+      const rollRad = Math.atan2(faces[263].y - faces[33].y, faces[263].x - faces[33].x);
+      const rollAngle = rollRad * (180 / Math.PI);
+
+      // 3. Buffer rodante de 2 segundos para la Red Neuronal de TensorFlow.js (12 Dimensiones)
       windowFramesRef.current.push({
         ear: EAR,
         yaw: yawRatio,
@@ -1169,6 +1188,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         noseDelta: noseDelta,
         gazeVar: variance,
         shoulder: shoulderAngle,
+        mar: MAR,
+        roll: rollAngle,
         t: now
       });
       windowFramesRef.current = windowFramesRef.current.filter(f => now - f.t <= 2000);
@@ -1182,6 +1203,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const frowns = wFrames.map(f => f.frown);
       const gazes = wFrames.map(f => f.gazeVar);
       const shoulders = wFrames.map(f => f.shoulder);
+      const mars = wFrames.map(f => f.mar ?? 0.05);
+      const rolls = wFrames.map(f => f.roll ?? 0.0);
 
       const earMean = ears.reduce((a, b) => a + b, 0) / wCount;
       const earMin = Math.min(...ears);
@@ -1190,9 +1213,16 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
       const pitchMean = pitches.reduce((a, b) => a + b, 0) / wCount;
       const pitchStd = Math.sqrt(pitches.reduce((sq, n) => sq + Math.pow(n - pitchMean, 2), 0) / wCount);
       const frownMean = frowns.reduce((a, b) => a + b, 0) / wCount;
-      const noseDeltaSum = wFrames.reduce((a, b) => a + b.noseDelta, 0);
+
+      // Normalización temporal de desplazamiento nasal (independiente de los FPS del navegador)
+      const wDurationSec = Math.max(0.5, (wFrames[wFrames.length - 1].t - wFrames[0].t) / 1000);
+      const rawNoseSum = wFrames.reduce((a, b) => a + b.noseDelta, 0);
+      const noseDeltaSum = (rawNoseSum / wDurationSec) * 2.0;
+
       const gazeVarMean = gazes.reduce((a, b) => a + b, 0) / wCount;
       const shoulderMean = shoulders.reduce((a, b) => a + b, 0) / wCount;
+      const marMean = mars.reduce((a, b) => a + b, 0) / wCount;
+      const rollMean = rolls.reduce((a, b) => a + b, 0) / wCount;
 
       // 4. INFERENCIA CON LA RED NEURONAL ENTRENADA EN TENSORFLOW.JS (<2ms)
       const aiResult = evaluateAIBiometrics({
@@ -1205,65 +1235,83 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
         frown_mean: frownMean,
         nose_delta_sum: noseDeltaSum,
         gaze_variance_mean: gazeVarMean,
-        shoulder_angle_mean: shoulderMean
+        shoulder_angle_mean: shoulderMean,
+        mar_mean: marMean,
+        roll_angle_mean: rollMean
       });
 
-      setAiPrediction(aiResult);
-
-      // Control Directo del Agente Autónomo sobre las Métricas de Enfoque y Carga
-      const pEnfoque = aiResult.probabilities[0] || 0;
-      const pDistr = aiResult.probabilities[1] || 0;
-      const pFatiga = aiResult.probabilities[2] || 0;
-      const pSobre = aiResult.probabilities[3] || 0;
-      const pAgobio = aiResult.probabilities[4] || 0;
-
-      // Barra Verde (C.L.A.P. Focus Score impulsado por la Red Neuronal):
-      if (aiResult.classIndex === 0) {
-        // Aumento suave hacia el score de la IA
-        metrics.nivel_clap = Math.min(100, metrics.nivel_clap * 0.95 + aiResult.focusScore * 0.05);
-        metrics.nivel_carga = Math.max(0, metrics.nivel_carga * 0.92);
-        setMascotExpression('happy');
-      } else if (aiResult.classIndex === 1) {
-        // Distracción detectada por la IA
-        metrics.nivel_clap = Math.max(10, metrics.nivel_clap - pDistr * 1.5);
-        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pDistr * 0.4);
-        setMascotExpression('normal');
-      } else if (aiResult.classIndex === 2) {
-        // Fatiga detectada por la IA (ojos caídos / somnolencia)
-        metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pFatiga * 1.2);
-        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pFatiga * 1.8);
-        setMascotExpression('blink');
-      } else if (aiResult.classIndex === 3) {
-        // Sobreestimulación motora detectada por la IA
-        metrics.nivel_clap = Math.max(15, metrics.nivel_clap - pSobre * 0.8);
-        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pSobre * 1.5);
-        setMascotExpression('normal');
-      } else if (aiResult.classIndex === 4) {
-        // Agobio postural detectado por la IA (tensión física / brazos elevados)
-        metrics.nivel_clap = Math.max(5, metrics.nivel_clap - pAgobio * 1.4);
-        metrics.nivel_carga = Math.min(100, metrics.nivel_carga + pAgobio * 2.2);
-        setMascotExpression('blink');
+      // Histéresis temporal de 1200ms para estabilización clínica de clase en pantalla
+      const rawClassIdx = aiResult.classIndex;
+      if (rawClassIdx !== displayedClassRef.current) {
+        if (pendingClassRef.current !== rawClassIdx) {
+          pendingClassRef.current = rawClassIdx;
+          pendingClassSinceRef.current = now;
+        } else if (now - pendingClassSinceRef.current >= 1200) {
+          displayedClassRef.current = rawClassIdx;
+          pendingClassRef.current = null;
+        }
+      } else {
+        pendingClassRef.current = null;
       }
 
-      // Subdivisión autónoma de tarea si la Red Neuronal detecta que el enfoque cayó bajo 45%
-      if (metrics.nivel_clap < 45 && !metrics.is_subdividing && !metrics.subdivided_indexes.includes(currentStepIdxRef.current)) {
+      const CLASS_NAMES = [
+        'ESTUDIO NORMAL / NEUTRO',
+        'ENFOQUE PROFUNDO (FLOW)',
+        'DISTRACCIÓN',
+        'FATIGA',
+        'SOBREESTIMULACIÓN',
+        'AGOBIO POSTURAL'
+      ];
+
+      const stabilizedResult: AIPredictionResult = {
+        ...aiResult,
+        classIndex: displayedClassRef.current,
+        className: CLASS_NAMES[displayedClassRef.current] || aiResult.className
+      };
+
+      // Throttling de 200ms para setAiPrediction (previene re-renders innecesarios manteniendo 60 FPS en el canvas)
+      if (now - lastAiUpdateRef.current >= 200) {
+        lastAiUpdateRef.current = now;
+        setAiPrediction(stabilizedResult);
+      }
+
+      // Control Directo de Métricas C.L.A.P. y Carga Cognitiva con Suavizado Exponencial Orgánico
+      const targetFocus = aiResult.focusScore;
+      const targetLoad = aiResult.stressLevel;
+
+      metrics.nivel_clap = Math.max(5, Math.min(100, metrics.nivel_clap * 0.94 + targetFocus * 0.06));
+      metrics.nivel_carga = Math.max(0, Math.min(100, metrics.nivel_carga * 0.94 + targetLoad * 0.06));
+
+      if (displayedClassRef.current === 1 || displayedClassRef.current === 0) {
+        setMascotExpression('happy');
+      } else if (displayedClassRef.current === 3 || displayedClassRef.current === 5) {
+        setMascotExpression('blink');
+      } else {
+        setMascotExpression('normal');
+      }
+
+      // Subdivisión autónoma de tarea si la Red Neuronal detecta que el enfoque cayó bajo 40%
+      if (metrics.nivel_clap < 40 && !metrics.is_subdividing && !metrics.subdivided_indexes.includes(currentStepIdxRef.current)) {
         subdivideCurrentStepRef.current(currentStepIdxRef.current);
       }
 
       // Intervención proactiva del Agente / Mentor IA cuando la Red Neuronal detecta sobrecarga continua
+      const pFatiga = aiResult.probabilities[3] || 0;
+      const pAgobio = aiResult.probabilities[5] || 0;
+
       if ((pAgobio > 0.65 || pFatiga > 0.65 || metrics.nivel_carga > 75) && (now - metrics.last_auto_chat > 45000)) {
         metrics.last_auto_chat = now;
         const symptom = pAgobio > 0.65
           ? `Postura en tensión física y agobio (${(pAgobio * 100).toFixed(0)}%)`
           : `Fatiga ocular y somnolencia (${(pFatiga * 100).toFixed(0)}%)`;
 
-        interventionRef.current(`[Agente Autónomo NeuroSynk]: La red neuronal detectó ${aiResult.className} con ${(aiResult.confidence * 100).toFixed(0)}% de certeza. Motivo: ${symptom}. Dale al usuario un consejo empático, corto y directo para desatorarse.`);
+        interventionRef.current(`[Agente Autónomo NeuroSynk]: La red neuronal detectó ${stabilizedResult.className} con ${(stabilizedResult.confidence * 100).toFixed(0)}% de certeza. Motivo: ${symptom}. Dale al usuario un consejo empático, corto y directo para desatorarse.`);
       }
 
-      statusMsg = `🧠 IA: ${aiResult.className} (${(aiResult.confidence * 100).toFixed(0)}%) • ${aiResult.statusMessage}`;
-      statusColor = aiResult.badgeColor;
-      statusBg = aiResult.badgeBg;
-      statusBorder = aiResult.badgeBorder;
+      statusMsg = `🧠 IA: ${stabilizedResult.className} (${(stabilizedResult.confidence * 100).toFixed(0)}%) • ${stabilizedResult.statusMessage}`;
+      statusColor = stabilizedResult.badgeColor;
+      statusBg = stabilizedResult.badgeBg;
+      statusBorder = stabilizedResult.badgeBorder;
     } else {
       statusMsg = "PDEF INACTIVO: ROSTRO NO DETECTADO";
       statusColor = "text-zinc-600";
