@@ -13,6 +13,40 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 // Pero conservamos esto para verificar si el servidor local tiene la clave en .env.local
 const serverApiKey = process.env.GEMINI_API_KEY;
 
+const CANDIDATE_MODELS = [
+  "gemini-3.5-flash",
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash"
+];
+
+async function generateWithModelCascade(
+  ai: GoogleGenAI,
+  params: {
+    contents: any;
+    config?: any;
+  }
+): Promise<{ text: string; model: string }> {
+  let lastError: any = null;
+  for (const model of CANDIDATE_MODELS) {
+    try {
+      const result = await ai.models.generateContent({
+        model,
+        contents: params.contents,
+        config: params.config
+      });
+      const text = typeof result.text === 'function' ? (result.text as any)() : result.text;
+      if (text && text.trim().length > 0) {
+        return { text, model };
+      }
+    } catch (err: any) {
+      console.warn(`[Server Cascade] Model ${model} failed (${err?.status || err?.message}). Cascading to next candidate...`);
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("No model in cascade succeeded");
+}
+
 app.post("/api/task-survey", async (req, res) => {
   const { task } = req.body;
   if (!task) {
@@ -99,8 +133,7 @@ REGLAS DE FORMATO:
 - Cero suposiciones fijas o materias impuestas. Las preguntas deben nacer de la meta introducida y del perfil del usuario.
 - Respuesta en formato JSON estricto.`;
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+    const completion = await generateWithModelCascade(ai, {
       contents: `Meta académica o laboral del usuario: "${task}"`,
       config: {
         systemInstruction: prompt_sistema,
@@ -223,8 +256,7 @@ REGLAS DE FORMATO:
 - Longitud: Entre 12 y 22 palabras por paso. Cero formato Markdown.
 - Devuelve un JSON estructurado con la propiedad "steps" (array de strings) para máxima compatibilidad con el frontend.`;
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+    const completion = await generateWithModelCascade(ai, {
       contents: `OBJETIVO: "${task}"\nRESPUESTAS DE LA ENCUESTA: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO ADICIONAL: "${context || 'Ninguno'}"`,
       config: {
         systemInstruction: prompt_sistema,
@@ -300,8 +332,7 @@ REGLAS DE FORMATO:
 - Cero Markdown (prohibido usar asteriscos o negritas).
 - Prohibidas las explicaciones, justificaciones o rodeos.`;
 
-    const completion = await ai.models.generateContent({
-      model: "gemini-1.5-flash",
+    const completion = await generateWithModelCascade(ai, {
       contents: `Paso bloqueado: ${parentStep}\nContexto de la tarea: ${taskContext || 'General'}`,
       config: {
         systemInstruction: prompt_sistema,
@@ -385,30 +416,14 @@ REGLAS DE FORMATO ESTRICTAS:
 - Cero Markdown (sin asteriscos, sin negritas).
 - Tono de co-presencia ("nosotros / estamos").`;
 
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-1.5-flash",
-        contents: `Paso en pantalla: "${currentStep || 'No especificado'}"\nMensaje del usuario: "${userText}"`,
-        config: {
-          systemInstruction: prompt_sistema,
-        }
-      });
-    } catch (modelErr: any) {
-      if (modelErr?.status === 404 || String(modelErr?.message).includes("not found")) {
-        response = await ai.models.generateContent({
-          model: "gemini-flash-latest",
-          contents: `Paso en pantalla: "${currentStep || 'No especificado'}"\nMensaje del usuario: "${userText}"`,
-          config: {
-            systemInstruction: prompt_sistema,
-          }
-        });
-      } else {
-        throw modelErr;
+    const completion = await generateWithModelCascade(ai, {
+      contents: `Paso en pantalla: "${currentStep || 'No especificado'}"\nMensaje del usuario: "${userText}"`,
+      config: {
+        systemInstruction: prompt_sistema,
       }
-    }
+    });
 
-    const rawText = typeof response.text === 'function' ? response.text() : response.text;
+    const rawText = completion.text;
     const cleanReply = rawText ? rawText.replace(/[*_#]/g, '').trim() : "AVANZA con el primer detalle del paso. Aquí sigo contigo.";
 
     res.json({ reply: cleanReply });

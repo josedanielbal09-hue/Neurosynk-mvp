@@ -7,12 +7,13 @@
  */
 
 export const CANDIDATE_MODELS = [
+  'gemini-3.5-flash',
+  'gemini-3.1-flash-lite',
   'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-3-flash-preview'
+  'gemini-2.5-flash'
 ];
 
-let activeConfirmedModel: string = 'gemini-2.5-flash-lite';
+let activeConfirmedModel: string = 'gemini-3.5-flash';
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -21,11 +22,12 @@ export function sanitizeApiKey(rawKey?: string): string {
   if (!rawKey) {
     if (typeof window !== 'undefined') {
       rawKey = localStorage.getItem('gemini_api_key') || '';
-    } else {
-      rawKey = '';
+    }
+    if (!rawKey && typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY) {
+      rawKey = (process.env as any).GEMINI_API_KEY;
     }
   }
-  return rawKey.trim().replace(/^["']|["']$/g, '');
+  return (rawKey || '').trim().replace(/^["']|["']$/g, '');
 }
 
 /**
@@ -34,12 +36,12 @@ export function sanitizeApiKey(rawKey?: string): string {
  */
 export async function findFastestWorkingModel(apiKey: string): Promise<string> {
   const cleanKey = sanitizeApiKey(apiKey);
-  if (!cleanKey) return 'gemini-2.5-flash-lite';
+  if (!cleanKey) return 'gemini-3.5-flash';
 
   const testModel = async (model: string): Promise<string> => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
     const ctrl = new AbortController();
-    const timeout = setTimeout(() => ctrl.abort(), 4000);
+    const timeout = setTimeout(() => ctrl.abort(), 8000);
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -73,7 +75,7 @@ export async function findFastestWorkingModel(apiKey: string): Promise<string> {
     return winner;
   } catch (aggErr: any) {
     console.warn("[Gemini Fast Ping] Modelos fallaron en paralelo:", aggErr?.errors);
-    return 'gemini-2.5-flash-lite';
+    return 'gemini-3.5-flash';
   }
 }
 
@@ -114,12 +116,11 @@ export async function callGoogleGeminiDirect(
     throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
-  // Siempre intentar en orden de velocidad y menor saturación
-  const modelsToTry = [
-    'gemini-2.5-flash-lite',
-    'gemini-2.5-flash',
-    'gemini-3-flash-preview'
-  ];
+  // Siempre intentar en orden de velocidad y menor saturación (deduplicado)
+  const modelsToTry = Array.from(new Set([
+    activeConfirmedModel,
+    ...CANDIDATE_MODELS
+  ]));
 
   let lastError: any = null;
 
@@ -146,44 +147,41 @@ export async function callGoogleGeminiDirect(
       };
     }
 
-    // Probar hasta 2 veces por modelo si Google da 503 transitorio
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const ctrl = new AbortController();
-      const timeout = setTimeout(() => ctrl.abort(), 5000);
+    const ctrl = new AbortController();
+    // Timeout por modelo: 12 segundos para permitir generación estructurada de JSON
+    const timeout = setTimeout(() => ctrl.abort(), 12000);
 
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-          signal: ctrl.signal
-        });
-        clearTimeout(timeout);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: ctrl.signal
+      });
+      clearTimeout(timeout);
 
-        if (res.ok) {
-          const data = await res.json();
-          const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (text && text.trim().length > 0) {
-            activeConfirmedModel = model;
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('gemini_confirmed_model', model);
-            }
-            return text;
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 0) {
+          activeConfirmedModel = model;
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('gemini_confirmed_model', model);
           }
-        } else if (res.status === 503 && attempt === 0) {
-          // Pico transitorio de demanda en Google: esperar 400ms y reintentar
-          await new Promise(r => setTimeout(r, 400));
-          continue;
-        } else {
-          const errJson = await res.json().catch(() => ({}));
-          lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
-          break;
+          return text;
         }
-      } catch (err: any) {
-        clearTimeout(timeout);
-        lastError = err;
-        break;
+      } else {
+        const errJson = await res.json().catch(() => ({}));
+        console.warn(`[Gemini Client Direct] Modelo ${model} devolvió HTTP ${res.status}: ${errJson?.error?.message || ''}. Cascada al siguiente modelo...`);
+        lastError = new Error(errJson?.error?.message || `HTTP ${res.status}`);
+        // Ante 503 (alta demanda) o 429, saltar de inmediato al siguiente modelo sin esperas
+        continue;
       }
+    } catch (err: any) {
+      clearTimeout(timeout);
+      console.warn(`[Gemini Client Direct] Modelo ${model} abortado o con error:`, err?.message);
+      lastError = err;
+      continue;
     }
   }
 
@@ -341,9 +339,27 @@ export async function taskSurveyUniversal(
   apiKey: string
 ): Promise<{ questions: SurveyQuestionItem[] }> {
   const cleanKey = sanitizeApiKey(apiKey);
-  if (!cleanKey) {
-    return { questions: DEFAULT_SURVEY_QUESTIONS };
-  }
+
+  const fetchFromServer = async (): Promise<{ questions: SurveyQuestionItem[] } | null> => {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (cleanKey) headers["x-gemini-api-key"] = cleanKey;
+      const res = await fetch("/api/task-survey", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ task })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+          return { questions: data.questions };
+        }
+      }
+    } catch (e) {
+      console.warn("[taskSurveyUniversal] Server survey fallback failed:", e);
+    }
+    return null;
+  };
 
   const prompt_sistema = `Eres el Diagnosticador Cognitivo y de Tareas de NeuroSynk.
 Tu misión es diseñar una encuesta de calibración rápida de EXACTAMENTE 5 preguntas breves a partir de la meta introducida por el usuario.
@@ -365,19 +381,27 @@ REGLAS DE FORMATO:
 - Respuesta en formato JSON estricto con la propiedad "questions".`;
 
   const fetchSurvey = async (): Promise<{ questions: SurveyQuestionItem[] }> => {
-    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, `Meta: "${task}"`, true);
-    const data = JSON.parse(text);
-    if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
-      return { questions: data.questions };
+    if (cleanKey) {
+      try {
+        const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, `Meta: "${task}"`, true);
+        const data = JSON.parse(text);
+        if (data.questions && Array.isArray(data.questions) && data.questions.length > 0) {
+          return { questions: data.questions };
+        }
+      } catch (err) {
+        console.warn("[taskSurveyUniversal] Direct client failed, trying server proxy...", err);
+      }
     }
+    const fromServer = await fetchFromServer();
+    if (fromServer) return fromServer;
     return { questions: DEFAULT_SURVEY_QUESTIONS };
   };
 
-  // Timeout guard: Si tarda más de 3.5 segundos, abrir la encuesta predeterminada al instante
+  // Timeout guard: 12 segundos antes de fallback offline
   const timeoutPromise = new Promise<{ questions: SurveyQuestionItem[] }>((resolve) =>
     setTimeout(() => {
       resolve({ questions: DEFAULT_SURVEY_QUESTIONS });
-    }, 3500)
+    }, 12000)
   );
 
   try {
@@ -436,9 +460,26 @@ export async function splitTaskUniversal(
     ];
   };
 
-  if (!cleanKey) {
-    return { steps: getFallbackSteps(task, surveyAnswers) };
-  }
+  const fetchFromServer = async (): Promise<{ steps: string[] } | null> => {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (cleanKey) headers["x-gemini-api-key"] = cleanKey;
+      const res = await fetch("/api/split-task", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ task, surveyAnswers, context })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
+          return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
+        }
+      }
+    } catch (e) {
+      console.warn("[splitTaskUniversal] Server fallback call failed:", e);
+    }
+    return null;
+  };
 
   const prompt_sistema = `Eres el Arquitecto de Planificación y Enfoque de NeuroSynk.
 Tu misión es diseñar una sesión de trabajo realista basada en las respuestas de la encuesta del usuario, especialmente su TIEMPO DISPONIBLE y su ESTADO COGNITIVO.
@@ -457,18 +498,27 @@ REGLAS DE FORMATO:
   const userContent = `OBJETIVO: "${task}"\nRESPUESTAS: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO: "${context || 'Ninguno'}"`;
 
   const fetchSteps = async (): Promise<{ steps: string[] }> => {
-    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
-    const data = JSON.parse(text);
-    if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
-      return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
+    if (cleanKey) {
+      try {
+        const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
+        const data = JSON.parse(text);
+        if (data.steps && Array.isArray(data.steps) && data.steps.length > 0) {
+          return { steps: data.steps.map((s: string) => s.replace(/(Paso \d+:)/i, '').replace(/\*/g, '').trim()) };
+        }
+      } catch (err) {
+        console.warn("[splitTaskUniversal] Direct client failed, trying server proxy...", err);
+      }
     }
+    const fromServer = await fetchFromServer();
+    if (fromServer) return fromServer;
     return { steps: getFallbackSteps(task, surveyAnswers) };
   };
 
+  // Timeout guard: 18 segundos permitiendo la cascada completa entre modelos
   const timeoutSteps = new Promise<{ steps: string[] }>((resolve) =>
     setTimeout(() => {
       resolve({ steps: getFallbackSteps(task, surveyAnswers) });
-    }, 4500)
+    }, 18000)
   );
 
   try {
@@ -495,10 +545,6 @@ export async function subdivideStepUniversal(
     "ESCRIBE la primera palabra clave para romper la inercia."
   ];
 
-  if (!cleanKey) {
-    return { subSteps: defaultNanoSteps };
-  }
-
   const prompt_sistema = `Eres el Rescatista Ejecutivo de NeuroSynk.
 Tu misión es recibir un paso donde el usuario experimenta bloqueo o parálisis cognitiva y fragmentarlo en exactamente 3 NANO-PASOS secuenciales de fricción cero (<60 segundos cada uno).
 
@@ -509,14 +555,35 @@ REGLAS DE FORMATO:
 
   const userContent = `Paso bloqueado: ${parentStep}\nContexto de la tarea: ${taskContext || 'General'}`;
 
-  try {
-    const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
-    const data = JSON.parse(text);
-    if (data.subSteps && Array.isArray(data.subSteps) && data.subSteps.length > 0) {
-      return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };
+  if (cleanKey) {
+    try {
+      const text = await callGoogleGeminiDirect(cleanKey, prompt_sistema, userContent, true);
+      const data = JSON.parse(text);
+      if (data.subSteps && Array.isArray(data.subSteps) && data.subSteps.length > 0) {
+        return { subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) };
+      }
+    } catch (err) {
+      console.warn("[Gemini Direct Subdivide] Error:", err);
     }
-  } catch (err) {
-    console.warn("[Gemini Direct Subdivide] Error:", err);
+  }
+
+  // Fallback to local server proxy
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (cleanKey) headers["x-gemini-api-key"] = cleanKey;
+    const res = await fetch("/api/subdivide-step", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ parentStep, stepNumber, taskContext })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.subSteps && Array.isArray(data.subSteps) && data.subSteps.length > 0) {
+        return { subSteps: data.subSteps };
+      }
+    }
+  } catch (e) {
+    console.warn("[subdivideStepUniversal] Server subdivide fallback failed:", e);
   }
 
   return { subSteps: defaultNanoSteps };

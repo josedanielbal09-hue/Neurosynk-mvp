@@ -231,17 +231,20 @@ export default function App() {
   const [mascotExpression, setMascotExpression] = useState<'normal' | 'blink' | 'happy'>('normal');
   const [proposedChange, setProposedChange] = useState<{ proposedTask: string; proposedSteps: string[] } | null>(null);
 
-  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => 
+    localStorage.getItem('gemini_api_key') || (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '')
+  );
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [keyTestResult, setKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>(() =>
-    (localStorage.getItem('gemini_api_key') || '').trim() ? 'browser' : 'none'
-  );
+  const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>(() => {
+    const k = (localStorage.getItem('gemini_api_key') || (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '')).trim();
+    return k ? 'browser' : 'none';
+  });
 
   useEffect(() => {
     const checkApiStatus = async () => {
-      const currentKey = (geminiApiKey || localStorage.getItem('gemini_api_key') || '').trim();
+      const currentKey = (geminiApiKey || localStorage.getItem('gemini_api_key') || (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '')).trim();
       if (currentKey) {
         setApiStatus('browser');
         return;
@@ -1434,7 +1437,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
               }`} />
             <span className="font-mono text-[9px] tracking-wider text-zinc-400 uppercase font-semibold">
-              {apiStatus === 'browser' ? 'Gemini 2.5 Activo' :
+              {apiStatus === 'browser' ? 'Gemini 3.5 Activo' :
                 apiStatus === 'server' ? 'Gemini Servidor' : 'IA Offline'}
             </span>
           </div>
@@ -1523,7 +1526,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                       const cleanKey = sanitizeApiKey(geminiApiKey);
                       try {
                         localStorage.setItem('gemini_api_key', cleanKey);
-                        localStorage.setItem('gemini_confirmed_model', 'gemini-2.5-flash-lite');
+                        localStorage.setItem('gemini_confirmed_model', 'gemini-3.5-flash');
                         setApiStatus(cleanKey ? 'browser' : 'none');
                       } catch (e) {
                         console.warn("Storage warning:", e);
