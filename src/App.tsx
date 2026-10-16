@@ -1716,10 +1716,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                 }}
                 className="flex flex-col items-center gap-6"
               >
-                <FocusBudWidget
-                  state={currentFocusState}
-                  message={budMessage}
-                />
+                <NeuroMascot expression={mascotExpression} size={130} />
 
                 <div className="flex flex-col items-center gap-1.5">
                   <span className="font-mono text-xs tracking-[0.25em] text-green-500 uppercase font-semibold animate-pulse">
