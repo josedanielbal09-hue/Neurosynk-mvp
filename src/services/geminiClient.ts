@@ -21,13 +21,25 @@ let activeConfirmedModel: string = 'gemini-3.5-flash';
 export function sanitizeApiKey(rawKey?: string): string {
   if (!rawKey) {
     if (typeof window !== 'undefined') {
-      rawKey = localStorage.getItem('gemini_api_key') || '';
-    }
-    if (!rawKey && typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY) {
+      const isCleared = localStorage.getItem('gemini_api_key_cleared') === 'true';
+      const stored = localStorage.getItem('gemini_api_key');
+      if (stored !== null && stored !== '') {
+        rawKey = stored;
+      } else if (!isCleared && typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY) {
+        rawKey = (process.env as any).GEMINI_API_KEY;
+      } else {
+        rawKey = '';
+      }
+    } else if (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY) {
       rawKey = (process.env as any).GEMINI_API_KEY;
+    } else {
+      rawKey = '';
     }
   }
-  return (rawKey || '').trim().replace(/^["']|["']$/g, '');
+  return (rawKey || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/^["']|["']$/g, '')
+    .trim();
 }
 
 /**
@@ -36,7 +48,9 @@ export function sanitizeApiKey(rawKey?: string): string {
  */
 export async function findFastestWorkingModel(apiKey: string): Promise<string> {
   const cleanKey = sanitizeApiKey(apiKey);
-  if (!cleanKey) return 'gemini-3.5-flash';
+  if (!cleanKey) {
+    throw new Error("Clave de API vacía. Por favor introduce tu clave de Google AI Studio.");
+  }
 
   const testModel = async (model: string): Promise<string> => {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanKey)}`;
@@ -54,11 +68,11 @@ export async function findFastestWorkingModel(apiKey: string): Promise<string> {
       clearTimeout(timeout);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(`[${model}] ${err?.error?.message || res.status}`);
+        throw new Error(err?.error?.message || `HTTP ${res.status}`);
       }
       const data = await res.json();
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (!text) throw new Error(`[${model}] Respuesta vacía`);
+      if (!text) throw new Error("Respuesta vacía de Google Gemini");
       return model;
     } catch (e: any) {
       clearTimeout(timeout);
@@ -75,7 +89,9 @@ export async function findFastestWorkingModel(apiKey: string): Promise<string> {
     return winner;
   } catch (aggErr: any) {
     console.warn("[Gemini Fast Ping] Modelos fallaron en paralelo:", aggErr?.errors);
-    return 'gemini-3.5-flash';
+    const firstErr = aggErr?.errors?.[0];
+    const errMsg = firstErr?.message || String(firstErr || "Error al conectar con Google Gemini. Revisa que tu clave sea válida.");
+    throw new Error(errMsg);
   }
 }
 
@@ -94,7 +110,7 @@ export async function testGeminiConnection(
     const winner = await findFastestWorkingModel(cleanKey);
     return {
       success: true,
-      message: `Enlace establecido con éxito. Modelo activo: ${winner}`,
+      message: `Enlace verificado con éxito. Modelo activo: ${winner}`,
       model: winner
     };
   } catch (err: any) {

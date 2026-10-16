@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck, Headphones, Volume2, Sliders } from 'lucide-react';
+import { Activity, BrainCircuit, CheckCircle, Target, ArrowRight, Play, Pause, Eye, EyeOff, Timer, MessageSquare, Send, Settings, Sparkles, Cpu, ShieldCheck, Headphones, Volume2, Sliders } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { loadNeuroSynkBrain, evaluateAIBiometrics, AIPredictionResult } from './services/aiInference';
 import { FocusBudWidget } from './components/avatar/FocusBudWidget';
@@ -231,15 +231,26 @@ export default function App() {
   const [mascotExpression, setMascotExpression] = useState<'normal' | 'blink' | 'happy'>('normal');
   const [proposedChange, setProposedChange] = useState<{ proposedTask: string; proposedSteps: string[] } | null>(null);
 
-  const [geminiApiKey, setGeminiApiKey] = useState(() => 
-    localStorage.getItem('gemini_api_key') || (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '')
-  );
+  const [geminiApiKey, setGeminiApiKey] = useState(() => {
+    const isCleared = localStorage.getItem('gemini_api_key_cleared') === 'true';
+    const stored = localStorage.getItem('gemini_api_key');
+    if (stored !== null && stored !== '') return stored;
+    if (isCleared) return '';
+    return typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY
+      ? (process.env as any).GEMINI_API_KEY
+      : '';
+  });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [keyTestResult, setKeyTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [apiStatus, setApiStatus] = useState<'browser' | 'server' | 'none'>(() => {
-    const k = (localStorage.getItem('gemini_api_key') || (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '')).trim();
-    return k ? 'browser' : 'none';
+    const isCleared = localStorage.getItem('gemini_api_key_cleared') === 'true';
+    const stored = (localStorage.getItem('gemini_api_key') || '').trim();
+    if (stored) return 'browser';
+    if (isCleared) return 'none';
+    const envKey = (typeof process !== 'undefined' && (process.env as any)?.GEMINI_API_KEY ? (process.env as any).GEMINI_API_KEY : '').trim();
+    return envKey ? 'browser' : 'none';
   });
 
   useEffect(() => {
@@ -1477,18 +1488,28 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
 
                 <div className="flex flex-col gap-2">
                   <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Gemini API Key:</label>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="Introduce tu clave personal (AIzaSy...)..."
-                    value={geminiApiKey}
-                    onChange={(e) => {
-                      setGeminiApiKey(e.target.value);
-                      setKeyTestResult(null);
-                    }}
-                    className="w-full px-4 py-3 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-green-500 text-white placeholder-zinc-700 font-mono text-xs shadow-inner"
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="Pega tu clave (AIzaSy...)"
+                      value={geminiApiKey}
+                      onChange={(e) => {
+                        setGeminiApiKey(e.target.value);
+                        setKeyTestResult(null);
+                      }}
+                      className="w-full px-4 py-3 pr-11 bg-zinc-950 border border-zinc-800 rounded-xl focus:outline-none focus:ring-1 focus:ring-green-500 text-white placeholder-zinc-700 font-mono text-xs shadow-inner"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 text-zinc-500 hover:text-zinc-300 transition-colors p-1"
+                      title={showApiKey ? "Ocultar clave" : "Mostrar clave para verificar"}
+                    >
+                      {showApiKey ? <EyeOff className="w-4 h-4 text-green-400" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                   <div className="flex items-center justify-between mt-1">
                     <p className="text-[10px] text-zinc-500 leading-normal font-sans">
                       Obtén tu clave en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>.
@@ -1524,8 +1545,10 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                   <button
                     onClick={() => {
                       const cleanKey = sanitizeApiKey(geminiApiKey);
+                      setGeminiApiKey(cleanKey);
                       try {
                         localStorage.setItem('gemini_api_key', cleanKey);
+                        localStorage.removeItem('gemini_api_key_cleared');
                         localStorage.setItem('gemini_confirmed_model', 'gemini-3.5-flash');
                         setApiStatus(cleanKey ? 'browser' : 'none');
                       } catch (e) {
@@ -1541,10 +1564,11 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                     onClick={() => {
                       setGeminiApiKey('');
                       localStorage.removeItem('gemini_api_key');
+                      localStorage.setItem('gemini_api_key_cleared', 'true');
                       setApiStatus('none');
                       setKeyTestResult(null);
                     }}
-                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded-xl transition-colors"
+                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 text-xs rounded-xl transition-colors cursor-pointer"
                   >
                     Limpiar
                   </button>
@@ -1554,7 +1578,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                       setKeyTestResult(null);
                       setIsSettingsOpen(false);
                     }}
-                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-xl transition-colors"
+                    className="py-2.5 px-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs rounded-xl transition-colors cursor-pointer"
                   >
                     Cerrar
                   </button>
