@@ -8,12 +8,27 @@
 
 export const CANDIDATE_MODELS = [
   'gemini-3.5-flash',
-  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash-lite',
   'gemini-2.5-flash-lite',
-  'gemini-2.5-flash'
+  'gemini-3.8-flash'
 ];
 
-let activeConfirmedModel: string = 'gemini-3.5-flash';
+function getInitialActiveModel(): string {
+  if (typeof window !== 'undefined') {
+    try {
+      const stored = localStorage.getItem('gemini_confirmed_model');
+      if (stored && CANDIDATE_MODELS.includes(stored)) {
+        return stored;
+      }
+      localStorage.setItem('gemini_confirmed_model', 'gemini-3.5-flash');
+    } catch {
+      // Ignorar restricciones de storage
+    }
+  }
+  return 'gemini-3.5-flash';
+}
+
+let activeConfirmedModel: string = getInitialActiveModel();
 
 /**
  * Limpia y normaliza la clave de API eliminando comillas, espacios y saltos residuales
@@ -132,7 +147,12 @@ export async function callGoogleGeminiDirect(
     throw new Error("Clave de Gemini API no especificada. Por favor configúrala en el icono ⚙️.");
   }
 
-  // Siempre intentar en orden de velocidad y menor saturación (deduplicado)
+  // Asegurar que activeConfirmedModel sea válido dentro del catálogo actual (priorizando Gemini 3.5)
+  if (!CANDIDATE_MODELS.includes(activeConfirmedModel)) {
+    activeConfirmedModel = 'gemini-3.5-flash';
+  }
+
+  // Siempre intentar en orden de prioridad (Gemini 3.5 primordial)
   const modelsToTry = Array.from(new Set([
     activeConfirmedModel,
     ...CANDIDATE_MODELS
