@@ -27,6 +27,7 @@ export interface AIPredictionResult {
   probabilities: number[];
   focusScore: number;       // 0 - 100
   stressLevel: number;      // 0 - 100
+  perclos: number;          // 0 - 100 (%) PERCLOS clínico
   statusMessage: string;
   badgeColor: string;
   badgeBg: string;
@@ -38,12 +39,34 @@ let loadedMetadata: ModelMetadata | null = null;
 let isModelLoading = false;
 let inferenceCounter = 0;
 
-// Estado del Suavizado Exponencial (EMA) a nivel de módulo
+// Estado del Suavizado Exponencial (EMA) a nivel de módulo (AGENTS.md: alpha = 0.45)
 let emaProbabilities: number[] | null = null;
-const EMA_ALPHA = 0.25;
+const EMA_ALPHA = 0.45;
+
+// Buffer Temporal Circular para cálculo de PERCLOS (Ventana deslizante de 30 segundos)
+interface BiometricSample {
+  timestamp: number;
+  ear_mean: number;
+  ear_min: number;
+  pitch: number;
+  yaw: number;
+}
+const PERCLOS_WINDOW_MS = 30000; // 30 segundos
+const EAR_CLOSURE_THRESHOLD = 0.20; // Umbral de oclusión palpebral (80% cerrado)
+const temporalBuffer: BiometricSample[] = [];
+
+// Histéresis Temporal de Estado Clínico (Umbral sostenido > 400ms para evitar oscilaciones)
+let sustainedClassIdx: number = 0;
+let candidateClassIdx: number = 0;
+let candidateStartTime: number = Date.now();
+const SUSTAIN_THRESHOLD_MS = 400;
 
 export function resetEMA(): void {
   emaProbabilities = null;
+  temporalBuffer.length = 0;
+  sustainedClassIdx = 0;
+  candidateClassIdx = 0;
+  candidateStartTime = Date.now();
 }
 
 // Calentamiento Basal (primeros 20 minutos de sesión: -20% estrés, +5% foco)
@@ -61,6 +84,32 @@ export function isWarmUpActive(): boolean {
 export function getWarmUpRemainingMinutes(): number {
   const elapsedMs = Date.now() - sessionStartTime;
   return Math.max(0, Math.ceil((20 * 60 * 1000 - elapsedMs) / 60000));
+}
+
+/**
+ * Calcula el PERCLOS (Percentage of Eyelid Closure over Time) según estándares clínicos
+ */
+export function calculatePERCLOS(currentTime: number): number {
+  // Purgar muestras más antiguas que la ventana deslizante
+  while (temporalBuffer.length > 0 && (currentTime - temporalBuffer[0].timestamp) > PERCLOS_WINDOW_MS) {
+    temporalBuffer.shift();
+  }
+
+  if (temporalBuffer.length === 0) return 0;
+
+  // Conteo de muestras con cierre palpebral activo
+  const closedCount = temporalBuffer.filter(s => s.ear_min < EAR_CLOSURE_THRESHOLD || s.ear_mean < EAR_CLOSURE_THRESHOLD).length;
+  const perclosRatio = closedCount / temporalBuffer.length;
+  return Math.round(perclosRatio * 100);
+}
+
+export function getTemporalBufferStats(): { perclos: number; sampleCount: number; windowSec: number } {
+  const now = Date.now();
+  return {
+    perclos: calculatePERCLOS(now),
+    sampleCount: temporalBuffer.length,
+    windowSec: Math.round(PERCLOS_WINDOW_MS / 1000)
+  };
 }
 
 export const DEFAULT_CLASS_NAMES = [
@@ -130,6 +179,7 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
       probabilities: [0.9, 0.02, 0.02, 0.02, 0.02, 0.02],
       focusScore: 85,
       stressLevel: 10,
+      perclos: 0,
       statusMessage: 'EN ESTADO DE FLUJO (CALIBRACIÓN)',
       badgeColor: 'text-emerald-400',
       badgeBg: 'bg-emerald-500/10',
@@ -188,20 +238,45 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
       }
     }
 
-    // 3. Selección de la clase dominante
+    // 3. Muestreo en Buffer Temporal y Cálculo de PERCLOS
+    const now = Date.now();
+    temporalBuffer.push({
+      timestamp: now,
+      ear_mean: metrics.ear_mean,
+      ear_min: metrics.ear_min,
+      pitch: metrics.pitch_mean,
+      yaw: metrics.yaw_mean
+    });
+    const currentPerclos = calculatePERCLOS(now);
+
+    // 4. Selección de la clase dominante con Histéresis Temporal (>400ms sostenido)
     let maxProb = -1;
-    let maxIdx = 0;
+    let instantaneousMaxIdx = 0;
     smoothedProbs.forEach((p, idx) => {
       if (p > maxProb) {
         maxProb = p;
-        maxIdx = idx;
+        instantaneousMaxIdx = idx;
       }
     });
 
+    // Validación clínica cruzada: Si PERCLOS >= 25% sostenido, priorizar estado de fatiga/somnolencia
+    if (currentPerclos >= 25 && instantaneousMaxIdx === 0 && smoothedProbs[3] > 0.20) {
+      instantaneousMaxIdx = 3; // FATIGA OCULAR / SUEÑO
+    }
+
+    // Aplicar filtro de histéresis temporal
+    if (instantaneousMaxIdx !== candidateClassIdx) {
+      candidateClassIdx = instantaneousMaxIdx;
+      candidateStartTime = now;
+    } else if ((now - candidateStartTime) >= SUSTAIN_THRESHOLD_MS) {
+      sustainedClassIdx = candidateClassIdx;
+    }
+
+    const maxIdx = sustainedClassIdx;
     const classNames = loadedMetadata.classNames || DEFAULT_CLASS_NAMES;
     const currentClass = classNames[maxIdx] || 'ENFOQUE';
 
-    // 4. Esperanza Matemática y Factor de Co-ocurrencia Clínica (kappa)
+    // 5. Esperanza Matemática y Factor de Co-ocurrencia Clínica (kappa)
     const pNormal = smoothedProbs[0] || 0;
     const pFlow = smoothedProbs[1] || 0;
     const pDistr = smoothedProbs[2] || 0;
@@ -300,6 +375,7 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
       probabilities: smoothedProbs,
       focusScore,
       stressLevel,
+      perclos: currentPerclos,
       statusMessage,
       badgeColor,
       badgeBg,
@@ -314,6 +390,7 @@ export function evaluateAIBiometrics(metrics: BiometricMetricsInput): AIPredicti
       probabilities: [0.85, 0.05, 0.03, 0.03, 0.02, 0.02],
       focusScore: 85,
       stressLevel: 15,
+      perclos: 0,
       statusMessage: 'EN ESTADO DE FLUJO (FIJACIÓN ACTIVA)',
       badgeColor: 'text-emerald-400',
       badgeBg: 'bg-emerald-500/10',
