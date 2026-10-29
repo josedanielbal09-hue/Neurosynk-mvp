@@ -14,7 +14,7 @@ import {
   subdivideStepUniversal,
   testGeminiConnection,
   sanitizeApiKey
-} from './services/geminiClient';
+} from './services/metaModelClient';
 
 
 declare global {
@@ -1448,8 +1448,8 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
               apiStatus === 'server' ? 'bg-blue-500 animate-pulse' : 'bg-red-500 animate-pulse'
               }`} />
             <span className="font-mono text-[9px] tracking-wider text-zinc-400 uppercase font-semibold">
-              {apiStatus === 'browser' ? 'Gemini 3.5 Activo' :
-                apiStatus === 'server' ? 'Gemini Servidor' : 'IA Offline'}
+              {apiStatus === 'browser' ? 'Meta Muse Activo' :
+                apiStatus === 'server' ? 'Meta / Baseten Activo' : 'IA Offline'}
             </span>
           </div>
           <button
@@ -1482,18 +1482,18 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                   </div>
                   <div className="flex flex-col">
                     <h3 className="text-white font-medium text-base tracking-tight">Ajustes de Enlace</h3>
-                    <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider">Gemini API Connection</span>
+                    <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider">Meta & Baseten Model API</span>
                   </div>
                 </div>
 
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Gemini API Key:</label>
+                  <label className="text-xs font-mono text-zinc-400 uppercase tracking-wider">Meta / Baseten API Key:</label>
                   <div className="relative flex items-center">
                     <input
                       type={showApiKey ? "text" : "password"}
                       autoComplete="off"
                       spellCheck={false}
-                      placeholder="Pega tu clave (AIzaSy...)"
+                      placeholder="Pega tu clave (LLM_... o Baseten)"
                       value={geminiApiKey}
                       onChange={(e) => {
                         setGeminiApiKey(e.target.value);
@@ -1512,7 +1512,7 @@ Concentrémonos en el primer sub-paso. ¡Tú puedes!`
                   </div>
                   <div className="flex items-center justify-between mt-1">
                     <p className="text-[10px] text-zinc-500 leading-normal font-sans">
-                      Obtén tu clave en <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">Google AI Studio</a>.
+                      Clave oficial en <a href="https://dev.meta.ai/" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline">dev.meta.ai</a> o <a href="https://baseten.co/" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">Baseten</a>.
                     </p>
                     <button
                       type="button"

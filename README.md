@@ -1,51 +1,101 @@
-# 🧠 NeuroSynk MVP — Mentor Biométrico de Foco y Neuro-productividad
+# 🧠 NeuroSynk AI Core — Cognitive Ergonomics & Focus Agent
+### Meta Global AI Developer Hackathon — Startup Track
 
-NeuroSynk es un asistente de productividad cognitivo e interactivo diseñado para optimizar el estado de flujo de trabajo mediante telemetría biométrica 100% local y mentoría cognitiva adaptativa en tiempo real.
-
-## 🚀 Características Clave
-
-*   **Telemetría PDEF en Tiempo Real**: Medición inteligente de sobrecarga cognitiva y fatiga mental utilizando MediaPipe Holistic (procesamiento facial y cinemático local).
-*   **Mentoría Cognitiva Adaptativa**: Integración directa con Google Gemini (`gemini-3.1-flash-lite`) para acompañamiento en tiempo real y alivio de parálisis cognitiva.
-*   **Subdivisión Dinámica**: Si el rendimiento C.L.A.P. desciende del 50%, el sistema detecta el bloqueo y divide la micro-tarea actual en tres pasos absurdamente sencillos.
-*   **Redefinición Temática**: Modificación y re-planificación de objetivos conversando directamente en lenguaje natural con el chatbot.
-*   **Splash Screen & Mascot**: Carga interactiva estilizada con expresiones animadas.
+NeuroSynk is an edge-first cognitive ergonomics and developer productivity agent designed to optimize mental flow states. It pairs **100% on-device biometric telemetry** at 60 FPS with **Meta AI models (Muse Spark, Muse Wonder, and SAM 3.1)** to alleviate task paralysis and sustain high-performance deep work.
 
 ---
 
-## 🛠️ Guía de Instalación para Desarrolladores
+## 🚀 Key Features
 
-Sigue estos pasos para levantar la aplicación en tu entorno local de desarrollo:
+* **Edge Biometric Telemetry (100% On-Device & Private)**:
+  Real-time facial and kinematic feature extraction using MediaPipe Holistic and local TensorFlow.js. Computes Z-Score normalized posture alignment, blink dynamics, and 30-second circular buffer PERCLOS without sending raw video feeds to the cloud.
+* **Real-Time Interventions via Meta Muse Spark**:
+  Ultra-low-latency streaming interventions via Server-Sent Events (SSE) that adaptively guide developers through cognitive friction.
+* **Cognitive Task Decomposition via Meta Muse Wonder**:
+  Dynamic micro-task decomposition. When ergonomic strain or executive fatigue is detected, complex work items are atomically subdivided into 3 actionable nano-steps (<60 seconds each).
+* **Workspace Ergonomic Calibration via SAM 3.1**:
+  Segment Anything powered ergonomic alignment to maintain ideal screen-to-face distance and posture during sprints.
+* **Resilient Multi-Provider Fallback via Baseten**:
+  Seamless fallback to **Muse Spark Open** (`meta-models/muse-spark-open-1026`) hosted on high-throughput **Baseten** serverless endpoints for 2M TPM enterprise throughput.
+* **Interactive Robot Avatar (FocusBud)**:
+  Procedural eye states (calibrated/focused, fatigued, recovery), dynamic radial aura, and WebAudio earcons providing instant grounding feedback.
 
-### 1. Requisitos Previos
-*   **Node.js** (Versión 18 o superior recomendada)
-*   **Cámara Web** (Para la captura biométrica local)
+---
 
-### 2. Clonar e Instalar Dependencias
-Instala los paquetes necesarios del proyecto ejecutando en tu terminal:
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     USER (Browser Client)                       │
+│                                                                 │
+│  ┌──────────────┐  ┌──────────────┐  ┌────────────────────────┐│
+│  │  MediaPipe    │  │  TF.js Model │  │  Audio Grounding       ││
+│  │  Holistic     │→ │  12-D Z-Score│  │  (Binaural/WebAudio)  ││
+│  │  60 FPS Local │  │  PERCLOS 30s │  └──────────┬─────────────┘│
+│  └──────┬───────┘  └──────┬───────┘              │              │
+│         │                 │                       │              │
+│         └────────┬────────┴───────────────────────┘              │
+│                  ▼                                               │
+│    aiInference.ts (EMA Filter α=0.45, Hysteresis 400ms)         │
+│                  │                                               │
+│                  ▼ Compact Telemetry Payload (~200 bytes)        │
+│  Avatar.tsx / FocusBudWidget.tsx (Reactive States & Micro-steps) │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ HTTPS / SSE
+                               ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     Backend Server (Node/Express)               │
+│                                                                 │
+│  Primary:  Meta Model API (dev.meta.ai/v1/responses)           │
+│            • muse-spark-1.0 (Real-time Streaming)               │
+│            • muse-wonder-1.0 (Deep Reasoning Decomposition)     │
+│            • SAM 3.1 (Ergonomic Posture Segmentation)           │
+│                                                                 │
+│  Fallback: Baseten Model API (inference.baseten.co/v1)          │
+│            • meta-models/muse-spark-open-1026                   │
+│                                                                 │
+│  Cloud:    Modal Serverless GPU Container                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🛠️ Quickstart & Setup
+
+### 1. Prerequisites
+* **Node.js** (v18 or higher)
+* **Webcam** (for local biometric telemetry)
+
+### 2. Install Dependencies
 ```bash
 npm install
 ```
 
-### 3. Configurar Clave de API de Google Gemini (Gratuita)
-Cada miembro del equipo debe obtener su propia clave de API gratuita para que la aplicación realice solicitudes de IA:
-
-1. Ingresa a **[Google AI Studio](https://aistudio.google.com/)**.
-2. Inicia sesión con cualquier cuenta de Google.
-3. Haz clic en el botón azul **"Get API key"** (Obtener clave de API) en la esquina superior izquierda.
-4. Selecciona **"Create API key"** y asóciala a un proyecto nuevo o existente.
-5. Copia la clave generada (empieza por `AIzaSy...`).
-
-### 4. Configurar Variables de Entorno
-Crea un archivo local para tus secretos de configuración:
-1. En la raíz de la carpeta `neurosynk-mvp`, crea un archivo llamado `.env.local` (este archivo está configurado en `.gitignore` para que **nunca** se suba a GitHub por seguridad).
-2. Pega tu clave de API en él siguiendo este formato:
+### 3. Configure Environment Variables
+Create a `.env.local` file in the project root (this file is excluded from git for security):
 ```env
-GEMINI_API_KEY="TU_CLAVE_DE_API_DE_GEMINI_AQUÍ"
+# Meta Model API (Official Portal)
+META_MODEL_API_KEY=LLM_your_meta_key_here
+META_API_URL=https://api.meta.ai/v1/responses
+
+# Baseten (Meta Muse Spark Open Fallback)
+BASETEN_API_KEY=your_baseten_key_here
+BASETEN_ENDPOINT_URL=https://inference.baseten.co/v1/chat/completions
+
+# Server Config
+PORT=3001
+NODE_ENV=development
 ```
 
-### 5. Iniciar Servidor de Desarrollo
-Para levantar el servidor web local con recarga rápida (HMR):
+### 4. Run Development Server
 ```bash
 npm run dev
 ```
-Abre tu navegador en **`http://localhost:3000`** para interactuar con la app.
+Open **`http://localhost:3001`** in your browser.
+
+---
+
+## 🏆 Hackathon Targets
+* **Startup Track — 1st Place**: Deep integration of Meta Muse Spark, Muse Wonder, and SAM 3.1.
+* **Best Build on Meta Open Weight Models**: `muse-spark-open-1026` via Baseten.
+* **Best Agentic Use-Case**: Closed-loop agent: Local Biometrics → Automated Cognitive Evaluation → Voice/Text Intervention.
