@@ -3,49 +3,128 @@ dotenv.config();
 dotenv.config({ path: ".env.local" });
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 
-// En el backend, usaremos la instanciación dinámica por cada petición.
-// Pero conservamos esto para verificar si el servidor local tiene la clave en .env.local
-const serverApiKey = process.env.GEMINI_API_KEY;
+// =========================================================================
+// META MODEL API & BASETEN CLIENT CONFIGURATION
+// =========================================================================
+const META_API_KEY = (process.env.MODEL_API_KEY || process.env.META_MODEL_API_KEY || process.env.META_API_KEY || '').trim();
+const META_API_URL = process.env.META_API_URL || "https://api.meta.ai/v1/responses";
+const BASETEN_API_KEY = (process.env.BASETEN_API_KEY || '').trim();
 
-const CANDIDATE_MODELS = [
-  "gemini-3.5-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-2.5-flash-lite",
-  "gemini-3.8-flash"
-];
+interface MetaCallParams {
+  model?: string;
+  systemPrompt?: string;
+  userPrompt: string;
+  temperature?: number;
+  maxTokens?: number;
+}
 
-async function generateWithModelCascade(
-  ai: GoogleGenAI,
-  params: {
-    contents: any;
-    config?: any;
+/**
+ * Universal caller prioritizing Meta Model API (Muse Spark / Wonder)
+ * with graceful fallback to Baseten and offline deterministic heuristics.
+ */
+async function callMetaModel(params: MetaCallParams): Promise<string> {
+  const model = params.model || "muse-wonder-1.0";
+  const messages: any[] = [];
+  if (params.systemPrompt) {
+    messages.push({ role: "system", content: params.systemPrompt });
   }
-): Promise<{ text: string; model: string }> {
-  let lastError: any = null;
-  for (const model of CANDIDATE_MODELS) {
+  messages.push({ role: "user", content: params.userPrompt });
+
+  // 1. Try Meta Model API (Official dev.meta.ai responses endpoint)
+  if (META_API_KEY) {
     try {
-      const result = await ai.models.generateContent({
-        model,
-        contents: params.contents,
-        config: params.config
+      const response = await fetch(META_API_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${META_API_KEY}`,
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream"
+        },
+        body: JSON.stringify({
+          model,
+          input: messages,
+          stream: true,
+          temperature: params.temperature ?? 0.7,
+          max_output_tokens: params.maxTokens ?? 2048,
+          top_p: 1,
+          reasoning: { effort: "medium" }
+        })
       });
-      const text = typeof result.text === 'function' ? (result.text as any)() : result.text;
-      if (text && text.trim().length > 0) {
-        return { text, model };
+
+      if (response.ok && response.body) {
+        let fullText = "";
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith("data: ")) {
+              const dataContent = trimmed.substring(6).trim();
+              if (dataContent === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(dataContent);
+                const delta = parsed.delta?.text || parsed.choices?.[0]?.delta?.content || parsed.text || "";
+                fullText += delta;
+              } catch {
+                fullText += dataContent;
+              }
+            }
+          }
+        }
+        if (fullText.trim().length > 0) {
+          return fullText.trim();
+        }
       }
-    } catch (err: any) {
-      console.warn(`[Server Cascade] Model ${model} failed (${err?.status || err?.message}). Cascading to next candidate...`);
-      lastError = err;
+    } catch (metaErr: any) {
+      console.warn(`[Meta Model API] Call failed (${metaErr?.message || metaErr}), trying Baseten fallback...`);
     }
   }
-  throw lastError || new Error("No model in cascade succeeded");
+
+  // 2. Try Baseten fallback
+  if (BASETEN_API_KEY) {
+    try {
+      const basetenUrl = process.env.BASETEN_ENDPOINT_URL || "https://bridge.baseten.co/v1/chat/completions";
+      const basetenRes = await fetch(basetenUrl, {
+        method: "POST",
+        headers: {
+          "Authorization": `Api-Key ${BASETEN_API_KEY}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "meta-models/muse-spark-open-1026",
+          messages,
+          temperature: params.temperature ?? 0.7,
+          max_tokens: params.maxTokens ?? 2048
+        })
+      });
+
+      if (basetenRes.ok) {
+        const data = await basetenRes.json();
+        const text = data.choices?.[0]?.message?.content || "";
+        if (text.trim().length > 0) {
+          return text.trim();
+        }
+      }
+    } catch (basetenErr: any) {
+      console.warn(`[Baseten Fallback] Call failed:`, basetenErr?.message || basetenErr);
+    }
+  }
+
+  throw new Error("No upstream AI provider available");
 }
+
+// =========================================================================
+// APPLICATION ENDPOINTS
+// =========================================================================
 
 app.post("/api/task-survey", async (req, res) => {
   const { task } = req.body;
@@ -104,77 +183,30 @@ app.post("/api/task-survey", async (req, res) => {
     ]
   };
 
-  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
-  const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-  if (!ai) {
-    console.warn("⚠️ GEMINI_API_KEY no configurada. Activando encuesta de calibración offline.");
-    res.json(fallbackSurvey);
-    return;
-  }
-
   try {
-    const prompt_sistema = `Eres el Diagnosticador Cognitivo y de Tareas de NeuroSynk.
+    const prompt_sistema = `Eres el Diagnosticador Cognitivo y de Tareas de NeuroSynk alimentado por Meta Muse.
 Tu misión es diseñar una encuesta de calibración rápida de EXACTAMENTE 5 preguntas breves a partir de la meta introducida por el usuario.
+Responde estrictamente con un JSON con la clave "questions": array de objetos con "id", "question", "options".`;
 
-ESTRUCTURA OBLIGATORIA DE LA ENCUESTA:
-- Pregunta 1 (id: "q1") DEBE SER OBLIGATORIAMENTE sobre el tiempo disponible para la sesión:
-  question: "¿Cuánto tiempo dedicarás a esta sesión?"
-  options: ["25 a 30 minutos (Sprint corto)", "45 a 60 minutos (Sesión estándar)", "90 a 120 minutos (Sesión profunda)"]
-- Pregunta 2 (id: "q2"): Alcance y avance tangible que busca lograr en ese lapso.
-- Pregunta 3 (id: "q3"): Conocimiento previo e insumos/materiales (si parte de cero o domina bases).
-- Pregunta 4 (id: "q4"): Nivel de energía ejecutiva y dispersión mental actual.
-- Pregunta 5 (id: "q5"): Punto habitual de fricción (arranque, mitad o cierre).
-
-REGLAS DE FORMATO:
-- Genera exactamente 5 preguntas (id: "q1" a "q5").
-- Cada pregunta debe ser ultra-concisa (máximo 14 palabras).
-- Preguntas q2 a q5 DEBEN incluir entre 2 y 3 opciones de respuesta rápida (máximo 6 palabras por opción) para responderse con un solo clic.
-- Cero suposiciones fijas o materias impuestas. Las preguntas deben nacer de la meta introducida y del perfil del usuario.
-- Respuesta en formato JSON estricto.`;
-
-    const completion = await generateWithModelCascade(ai, {
-      contents: `Meta académica o laboral del usuario: "${task}"`,
-      config: {
-        systemInstruction: prompt_sistema,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            questions: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  id: { type: "string" },
-                  question: { type: "string" },
-                  options: {
-                    type: "array",
-                    items: { type: "string" }
-                  }
-                },
-                required: ["id", "question", "options"]
-              }
-            }
-          },
-          required: ["questions"]
-        }
-      }
+    const text = await callMetaModel({
+      model: "muse-wonder-1.0",
+      systemPrompt: prompt_sistema,
+      userPrompt: `Meta del usuario: "${task}"`
     });
 
-    const responseText = completion.text;
-    if (!responseText) throw new Error("Respuesta vacía de Gemini en task-survey");
-
-    const data = JSON.parse(responseText);
-    if (!data.questions || !Array.isArray(data.questions) || data.questions.length === 0) {
-      throw new Error("Formato de preguntas no válido");
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
+      if (data.questions && Array.isArray(data.questions)) {
+        res.json({ questions: data.questions });
+        return;
+      }
     }
-
-    res.json({ questions: data.questions });
   } catch (error: any) {
-    console.error("Gemini Task Survey Error:", error?.message || error);
-    res.json(fallbackSurvey);
+    console.warn("[Task Survey] Using adaptive fallback:", error?.message || error);
   }
+
+  res.json(fallbackSurvey);
 });
 
 app.post("/api/split-task", async (req, res) => {
@@ -184,10 +216,6 @@ app.post("/api/split-task", async (req, res) => {
     return;
   }
 
-  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
-  const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-  // Helper de respaldo offline inteligente adaptado a la restricción temporal y al estado cognitivo
   const getFallbackSteps = (targetTask: string, answers: any): string[] => {
     const timeAns = String(answers?.q1 || '').toLowerCase();
     const isShort = timeAns.includes('25') || timeAns.includes('30') || timeAns.includes('sprint');
@@ -216,7 +244,6 @@ app.post("/api/split-task", async (req, res) => {
       ];
     }
 
-    // Sesión estándar (45 a 60 minutos): Dos bloques con pausa somática intermedia
     return [
       `DELIMITA el objetivo específico y materiales necesarios para este bloque de '${targetTask}'.`,
       `ANALIZA el primer núcleo conceptual identificando definiciones clave y sus relaciones.`,
@@ -227,161 +254,76 @@ app.post("/api/split-task", async (req, res) => {
     ];
   };
 
-  // Respaldo offline si no hay clave
-  if (!ai) {
-    console.warn("⚠️ GEMINI_API_KEY no configurada. Activando modo offline adaptativo.");
-    res.json({ steps: getFallbackSteps(task, surveyAnswers) });
-    return;
-  }
-
   try {
-    const prompt_sistema = `Eres el Arquitecto de Planificación y Enfoque de NeuroSynk.
-Tu misión es diseñar una sesión de trabajo realista basada en las respuestas de la encuesta del usuario, especialmente su TIEMPO DISPONIBLE y su ESTADO COGNITIVO.
+    const prompt_sistema = `Eres el Arquitecto de Planificación y Enfoque de NeuroSynk impulsado por Meta Muse Wonder.
+Tu misión es diseñar una sesión de trabajo realista basada en las respuestas de la encuesta del usuario.
+Cada paso debe iniciar con un VERBO DE ACCIÓN EN MAYÚSCULAS. Cero formato Markdown.
+Responde estrictamente con un JSON con la clave "steps": array de strings.`;
 
-LÓGICA DE PLANIFICACIÓN POR TIEMPO Y RITMO (POMODORO ADAPTATIVO):
-1. RESTRICCIÓN DE TIEMPO (Variable Reina):
-   - Sesión de ~30 min: Diseña UN SOLO bloque de enfoque concentrado en una porción atómica y alcanzable (4 a 5 micro-pasos en total). Prohibido abarcar temarios completos.
-   - Sesión de 45-60 min: Diseña DOS bloques de enfoque separados por una micro-pausa somática de 3-5 minutos (ej. 6 a 8 pasos en total, insertando un paso de PAUSA SOMÁTICA al medio).
-   - Sesión de 90-120 min: Diseña TRES bloques de enfoque intercalados con pausas breves de biorregulación y un hito final de verificación o cierre (9 a 12 pasos en total).
-
-2. INCORPORACIÓN DE PAUSAS SOMÁTICAS EN LA SECUENCIA:
-   - Cuando la sesión requiera descanso entre bloques, el paso DEBE redactarse como una instrucción activa de recuperación física (ej. "PAUSA SOMÁTICA: Despeja la vista de la pantalla, bebe agua y estira los brazos por 3 minutos.").
-
-3. CALIBRACIÓN POR CONOCIMIENTO Y ENERGÍA:
-   - Si el usuario indicó conocimiento previo bajo o parálisis/fatiga, los 2 primeros pasos deben ser de fricción ultra-baja (<60 seg) para romper la inercia.
-   - Si el usuario indicó conocimiento avanzado y alta energía, omite introducciones y enfoca los bloques directamente en la práctica compleja o redacción avanzada.
-
-REGLAS DE FORMATO:
-- Cada paso debe iniciar obligatoriamente con un VERBO DE ACCIÓN EN MAYÚSCULAS (ej. IDENTIFICA, REDACTA, RESUELVE, PAUSA, VERIFICA).
-- Longitud: Entre 12 y 22 palabras por paso. Cero formato Markdown.
-- Devuelve un JSON estructurado con la propiedad "steps" (array de strings) para máxima compatibilidad con el frontend.`;
-
-    const completion = await generateWithModelCascade(ai, {
-      contents: `OBJETIVO: "${task}"\nRESPUESTAS DE LA ENCUESTA: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO ADICIONAL: "${context || 'Ninguno'}"`,
-      config: {
-        systemInstruction: prompt_sistema,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            steps: {
-              type: "array",
-              items: {
-                type: "string"
-              },
-              description: "Secuencia secuencial adaptada al tiempo y pausas somáticas"
-            }
-          },
-          required: ["steps"]
-        }
-      }
+    const text = await callMetaModel({
+      model: "muse-wonder-1.0",
+      systemPrompt: prompt_sistema,
+      userPrompt: `OBJETIVO: "${task}"\nRESPUESTAS: ${JSON.stringify(surveyAnswers || {})}\nCONTEXTO: "${context || 'General'}"`
     });
 
-    const responseText = completion.text;
-    if (!responseText) throw new Error("Respuesta vacía de Gemini");
-
-    const data = JSON.parse(responseText);
-    if (!data.steps || !Array.isArray(data.steps) || data.steps.length === 0) {
-      throw new Error("Formato de pasos no válido");
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(data.steps) && data.steps.length > 0) {
+        const cleanSteps = data.steps.map((s: string) => s.replace(/\*/g, '').trim());
+        res.json({ steps: cleanSteps });
+        return;
+      }
     }
-
-    // Limpieza de asteriscos y espacios residuales
-    const cleanSteps = data.steps.map((s: string) => s.replace(/\*/g, '').trim());
-    res.json({ steps: cleanSteps });
-  } catch (error: any) {
-    console.error("Gemini Split Task Error:", error?.message || error);
-    res.json({ steps: getFallbackSteps(task, surveyAnswers) });
+  } catch (err: any) {
+    console.warn("[Split Task] Using deterministic fallback:", err?.message || err);
   }
+
+  res.json({ steps: getFallbackSteps(task, surveyAnswers) });
 });
 
 app.post("/api/subdivide-step", async (req, res) => {
-  const { parentStep, stepNumber, taskContext } = req.body;
+  const { parentStep, taskContext } = req.body;
   if (!parentStep) {
     res.status(400).json({ error: "parentStep is required" });
     return;
   }
 
-  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
-  const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-  // Respaldo offline con nano-pasos atómicos de rescate
-  if (!ai) {
-    console.warn("⚠️ GEMINI_API_KEY no configurada. Activando modo offline en subdivide-step.");
-    res.json({
-      subSteps: [
-        "TOMA tu pluma o sitúa el cursor directamente en tu espacio de trabajo.",
-        "LOCALIZA únicamente la primera línea o concepto introductorio.",
-        "ESCRIBE la primera palabra clave para romper la inercia."
-      ]
-    });
-    return;
-  }
+  const fallbackSubSteps = [
+    "TOMA tu pluma o sitúa el cursor directamente en tu espacio de trabajo.",
+    "LOCALIZA únicamente la primera línea o concepto introductorio.",
+    "ESCRIBE la primera palabra clave para romper la inercia."
+  ];
 
   try {
-    const prompt_sistema = `Eres el Rescatista Ejecutivo de NeuroSynk.
-Tu misión es recibir un paso donde el usuario experimenta bloqueo o parálisis cognitiva y fragmentarlo en exactamente 3 NANO-PASOS secuenciales de fricción cero (<60 segundos cada uno).
+    const prompt_sistema = `Eres el Rescatista Ejecutivo de NeuroSynk con Meta Muse Spark.
+Fragmenta el paso bloqueado en exactamente 3 NANO-PASOS atómicos de menos de 60 segundos cada uno.
+Cada nano-paso debe iniciar con un VERBO DE ACCIÓN EN MAYÚSCULAS.
+Responde estrictamente con un JSON con la clave "subSteps": array de 3 strings.`;
 
-REGLAS DE RESCATE ATÓMICO:
-1. NANO-PASO 1: Anclaje físico o de cursor (ej. TOMA tu pluma, SITÚA el cursor, ABRE el documento).
-2. NANO-PASO 2: Micro-lectura mínima (ej. LOCALIZA el primer renglón, REVISA la primera palabra).
-3. NANO-PASO 3: Registro mecánico atómico (ej. ESCRIBE una sola palabra clave, ANOTA el título).
+    const text = await callMetaModel({
+      model: "muse-spark-1.0",
+      systemPrompt: prompt_sistema,
+      userPrompt: `Paso bloqueado: "${parentStep}"\nContexto: "${taskContext || 'General'}"`
+    });
 
-REGLAS DE FORMATO:
-- Cada nano-paso debe iniciar obligatoriamente con un VERBO DE ACCIÓN FÍSICA EN MAYÚSCULAS (ej. TOMA, LOCALIZA, ESCRIBE).
-- Longitud: Entre 8 y 16 palabras por nano-paso.
-- Cero Markdown (prohibido usar asteriscos o negritas).
-- Prohibidas las explicaciones, justificaciones o rodeos.`;
-
-    const completion = await generateWithModelCascade(ai, {
-      contents: `Paso bloqueado: ${parentStep}\nContexto de la tarea: ${taskContext || 'General'}`,
-      config: {
-        systemInstruction: prompt_sistema,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            subSteps: {
-              type: "array",
-              items: {
-                type: "string"
-              },
-              description: "Exactamente 3 nano-pasos atómicos de rescate"
-            }
-          },
-          required: ["subSteps"]
-        }
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(data.subSteps) && data.subSteps.length > 0) {
+        res.json({ subSteps: data.subSteps.map((s: string) => s.replace(/\*/g, '').trim()) });
+        return;
       }
-    });
-
-    const responseText = completion.text;
-    if (!responseText) {
-      throw new Error("Respuesta vacía de Gemini");
     }
-
-    const data = JSON.parse(responseText);
-    if (!data.subSteps || !Array.isArray(data.subSteps)) {
-      throw new Error("Formato JSON de sub-pasos no válido");
-    }
-
-    // Limpieza de asteriscos y espacios residuales
-    const cleanSubSteps = data.subSteps.map((s: string) => s.replace(/\*/g, '').trim());
-    res.json({ subSteps: cleanSubSteps });
-  } catch (error: any) {
-    console.error("Gemini Subdivide Step Error:", error?.message || error);
-    res.json({
-      subSteps: [
-        "TOMA tu pluma o sitúa el cursor directamente en tu espacio de trabajo.",
-        "LOCALIZA únicamente la primera línea o concepto introductorio.",
-        "ESCRIBE la primera palabra clave para romper la inercia."
-      ]
-    });
+  } catch (err: any) {
+    console.warn("[Subdivide Step] Using fallback:", err?.message || err);
   }
-});
 
+  res.json({ subSteps: fallbackSubSteps });
+});
 
 app.post("/api/chat", async (req, res) => {
   const { message, messages, currentStep, taskContext } = req.body;
-  
   const userText = message || (Array.isArray(messages) && messages.length > 0 
     ? (messages[messages.length - 1].content || messages[messages.length - 1].text || '') 
     : '');
@@ -391,54 +333,30 @@ app.post("/api/chat", async (req, res) => {
     return;
   }
 
-  const apiKey = (req.headers['x-gemini-api-key'] as string || '').trim() || serverApiKey;
-  const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-  if (!ai) {
-    console.warn("⚠️ Cliente Gemini no disponible en /api/chat");
-    res.json({ reply: "CONTINÚA con el paso actual. Estamos avanzando juntos." });
-    return;
-  }
-
   try {
-    const prompt_sistema = `Eres el Mentor de Ejecución y Co-presencia de NeuroSynk.
-Tu misión es mantener al estudiante en acción resolviendo dudas de forma quirúrgica.
-Contexto: Meta: "${taskContext || 'General'}" | Paso activo: "${currentStep || 'Trabajo en curso'}".
+    const prompt_sistema = `Eres el Mentor de Co-presencia de NeuroSynk impulsado por Meta Muse Spark.
+Tu misión es mantener al usuario en acción resolviendo dudas en menos de 28 palabras.
+Inicia SIEMPRE con un VERBO DE ACCIÓN EN MAYÚSCULAS. Cero Markdown. Tono de co-presencia ("estamos / vamos").`;
 
-INSTRUCCIONES DE RESPUESTA:
-1. Si el usuario pide explicación ("no entiendo", "explícalo", "ayuda"): Explica en UNA sola frase directa el concepto central del paso y da una micro-acción física inmediata.
-2. Si el usuario reporta distracción o evasión: Ordena interrumpir el distractor e iniciar una acción de 30 segundos en el paso.
-3. Si el usuario reporta avance ("listo", "ya"): Valida el avance e impulsa al siguiente paso.
-
-REGLAS DE FORMATO ESTRICTAS:
-- Inicia SIEMPRE con un VERBO DE ACCIÓN EN MAYÚSCULAS (ej. REVISA, IDENTIFICA, ESCRIBE, ENFOCA).
-- Máximo 2 oraciones (menos de 28 palabras en total).
-- Cero Markdown (sin asteriscos, sin negritas).
-- Tono de co-presencia ("nosotros / estamos").`;
-
-    const completion = await generateWithModelCascade(ai, {
-      contents: `Paso en pantalla: "${currentStep || 'No especificado'}"\nMensaje del usuario: "${userText}"`,
-      config: {
-        systemInstruction: prompt_sistema,
-      }
+    const text = await callMetaModel({
+      model: "muse-spark-1.0",
+      systemPrompt: prompt_sistema,
+      userPrompt: `Paso activo: "${currentStep || 'Trabajo'}"\nContexto: "${taskContext || 'General'}"\nMensaje: "${userText}"`
     });
 
-    const rawText = completion.text;
-    const cleanReply = rawText ? rawText.replace(/[*_#]/g, '').trim() : "AVANZA con el primer detalle del paso. Aquí sigo contigo.";
-
-    res.json({ reply: cleanReply });
+    const cleanReply = text.replace(/[*_#]/g, '').trim();
+    res.json({ reply: cleanReply || "AVANZA con el primer detalle del paso. Estamos contigo." });
   } catch (err: any) {
-    console.error("DEBUG_CHAT_ERROR:", err?.status || err?.code || '', err?.message || err);
-    res.json({
-      reply: "DIVIDE el paso en su mínima expresión. Escribe solo el primer término para arrancar."
-    });
+    console.warn("[Chat] Using adaptive reply:", err?.message || err);
+    res.json({ reply: "DIVIDE el paso en su mínima expresión. Escribe la primera palabra para arrancar." });
   }
 });
 
 app.get("/api/api-status", (req, res) => {
   res.json({
-    hasServerKey: !!process.env.GEMINI_API_KEY,
-    hasMetaKey: !!(process.env.META_API_KEY || process.env.META_MODEL_API_KEY)
+    hasMetaKey: !!META_API_KEY,
+    hasBasetenKey: !!BASETEN_API_KEY,
+    activeProvider: META_API_KEY ? "meta-model-api" : (BASETEN_API_KEY ? "baseten" : "offline-adaptive")
   });
 });
 
@@ -446,11 +364,8 @@ app.get("/api/api-status", (req, res) => {
 // META GLOBAL AI HACKATHON CORE ENDPOINTS (MUSE SPARK, WONDER, SAM 3.1)
 // =========================================================================
 
-const META_API_KEY = process.env.META_MODEL_API_KEY || process.env.META_API_KEY || '';
-const META_API_BASE = process.env.META_API_BASE || 'https://api.meta.ai/v1';
-
 /**
- * 1. Muse Spark - Streaming de Intervención Rápida en Co-presencia
+ * 1. Muse Spark - Streaming SSE de Intervención Rápida en Co-presencia
  */
 app.post("/api/meta/muse-spark/stream", async (req, res) => {
   const { perclos = 0, fatigueScore = 0, postureScore = 0, currentTask = 'Estudio', cognitiveClass = 'NEUTRO' } = req.body;
@@ -459,48 +374,34 @@ app.post("/api/meta/muse-spark/stream", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  // Si no hay llave aún (pre-Kickoff), responder con generador de co-presencia de latencia ultrabaja
-  if (!META_API_KEY) {
-    let message = "ENFOCA el primer detalle del paso. Estamos juntos en este sprint.";
-    if (perclos > 25 || fatigueScore > 50) {
-      message = "DESCANSA tu mirada 20 segundos fuera de la pantalla. Cuidamos tu ritmo cognitivo.";
-    } else if (postureScore > 40) {
-      message = "AJUSTA tu espalda y relaja los hombros. La postura despeja la mente.";
-    }
-
-    const words = message.split(" ");
-    for (const w of words) {
-      res.write(`${w} `);
-      await new Promise(r => setTimeout(r, 40));
-    }
-    res.end();
-    return;
-  }
+  const prompt = `Usuario en sesión de trabajo. Estado: PERCLOS=${perclos}%, Fatiga=${fatigueScore}/100, Postura=${postureScore}/100, Clasificación=${cognitiveClass}. Tarea: "${currentTask}". Genera UNA sola micro-instrucción empática de máximo 15 palabras iniciando con verbo de acción en MAYÚSCULAS.`;
 
   try {
-    const prompt = `Usuario en sesión de estudio. Estado biológico: PERCLOS=${perclos}%, Fatiga=${fatigueScore}/100, Postura=${postureScore}/100, Clasificación=${cognitiveClass}. Tarea: "${currentTask}". Genera UNA sola micro-instrucción empática de máximo 15 palabras iniciando con verbo de acción en MAYÚSCULAS.`;
-
-    const metaRes = await fetch(`${META_API_BASE}/models/muse-spark:stream`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${META_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ prompt, stream: true, max_tokens: 45 })
+    const text = await callMetaModel({
+      model: "muse-spark-1.0",
+      userPrompt: prompt,
+      temperature: 0.5,
+      maxTokens: 45
     });
 
-    if (metaRes.ok && metaRes.body) {
-      metaRes.body.pipeTo(new WritableStream({
-        write(chunk) { res.write(chunk); },
-        close() { res.end(); }
-      }));
-    } else {
-      res.write("AVANZA con determinación en este paso. Seguimos contigo.");
-      res.end();
+    const words = text.split(" ");
+    for (const w of words) {
+      res.write(`${w} `);
+      await new Promise(r => setTimeout(r, 30));
     }
+    res.end();
   } catch (err) {
-    console.warn("[Meta Muse Spark Stream Error]:", err);
-    res.write("RESPIRA hondo y retoma el primer objetivo.");
+    let fallback = "ENFOCA el primer detalle del paso. Estamos juntos en este sprint.";
+    if (perclos > 25 || fatigueScore > 50) {
+      fallback = "DESCANSA tu mirada 20 segundos fuera de la pantalla. Cuidamos tu ritmo cognitivo.";
+    } else if (postureScore > 40) {
+      fallback = "AJUSTA tu espalda y relaja los hombros. La postura despeja la mente.";
+    }
+    const words = fallback.split(" ");
+    for (const w of words) {
+      res.write(`${w} `);
+      await new Promise(r => setTimeout(r, 30));
+    }
     res.end();
   }
 });
@@ -511,7 +412,6 @@ app.post("/api/meta/muse-spark/stream", async (req, res) => {
 app.post("/api/meta/muse-wonder/decompose", async (req, res) => {
   const { task = 'Trabajo', perclos = 0, stressLevel = 0 } = req.body;
 
-  // Fallback determinista de fricción cero
   const fallback = {
     nanoSteps: [
       `DELIMITA el primer término o punto atómico de "${task}".`,
@@ -521,34 +421,23 @@ app.post("/api/meta/muse-wonder/decompose", async (req, res) => {
     estimatedSecondsPerStep: perclos > 25 ? 60 : 45
   };
 
-  if (!META_API_KEY) {
-    res.json(fallback);
-    return;
-  }
-
   try {
-    const metaRes = await fetch(`${META_API_BASE}/models/muse-wonder:generate`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${META_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        task,
-        perclos,
-        stressLevel,
-        format: "json",
-        max_steps: 3
-      })
+    const text = await callMetaModel({
+      model: "muse-wonder-1.0",
+      systemPrompt: "Eres Muse Wonder. Descompón la tarea en exactamente 3 nano-pasos ejecutables en menos de 60 segundos cada uno. Responde en JSON con la clave 'nanoSteps': array de strings.",
+      userPrompt: `Tarea: "${task}", PERCLOS: ${perclos}%, Estrés: ${stressLevel}%`
     });
 
-    if (metaRes.ok) {
-      const data = await metaRes.json();
-      res.json(data);
-      return;
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const data = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(data.nanoSteps)) {
+        res.json({ nanoSteps: data.nanoSteps, estimatedSecondsPerStep: fallback.estimatedSecondsPerStep });
+        return;
+      }
     }
   } catch (e) {
-    console.warn("[Meta Muse Wonder Error]:", e);
+    console.warn("[Meta Muse Wonder] Using fallback:", e);
   }
 
   res.json(fallback);
@@ -589,6 +478,7 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Active AI Provider: ${META_API_KEY ? 'Meta Model API' : (BASETEN_API_KEY ? 'Baseten' : 'Offline Adaptive Heuristics')}`);
   });
 }
 

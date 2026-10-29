@@ -22,5 +22,18 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": [
+    "src",
+    "server.ts",
+    "vite.config.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "legacy_archive",
+    "recolector_datos_ia",
+    "entrenamiento_ia_core",
+    "backend-ai-python"
+  ]
 }
