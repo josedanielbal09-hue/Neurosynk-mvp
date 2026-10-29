@@ -92,11 +92,11 @@ async function callMetaModel(params: MetaCallParams): Promise<string> {
   // 2. Try Baseten fallback
   if (BASETEN_API_KEY) {
     try {
-      const basetenUrl = process.env.BASETEN_ENDPOINT_URL || "https://bridge.baseten.co/v1/chat/completions";
+      const basetenUrl = process.env.BASETEN_ENDPOINT_URL || "https://inference.baseten.co/v1/chat/completions";
       const basetenRes = await fetch(basetenUrl, {
         method: "POST",
         headers: {
-          "Authorization": `Api-Key ${BASETEN_API_KEY}`,
+          "Authorization": `Bearer ${BASETEN_API_KEY}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
