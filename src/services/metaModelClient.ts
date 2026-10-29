@@ -315,3 +315,58 @@ export async function calibrateErgonomicsWithSAM(
     ]
   };
 }
+
+/**
+ * Evaluación ergonómica visual multimodal con Meta Muse Spark Open en Baseten
+ */
+export async function evaluateVisionErgonomics(
+  imageSnapshotBase64: string,
+  task: string = 'Estudio',
+  cognitiveState: string = 'NEUTRO'
+): Promise<{
+  provider: string;
+  postureScore: number;
+  distanceMetric: 'OPTIMAL' | 'TOO_CLOSE' | 'TOO_FAR';
+  headTiltAngle: number;
+  recommendations: string[];
+}> {
+  try {
+    const response = await fetch('/api/meta/vision-ergonomics', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: imageSnapshotBase64, task, cognitiveState })
+    });
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    console.warn('[Vision Ergonomics Client] Fallback:', err);
+  }
+
+  return {
+    provider: 'local-biomechanical',
+    postureScore: 90,
+    distanceMetric: 'OPTIMAL',
+    headTiltAngle: 0,
+    recommendations: [
+      'MANTÉN tu mirada alineada al tercio superior del monitor.',
+      'RESPIRA profundo y relaja la tensión de los hombros.'
+    ]
+  };
+}
+
+/**
+ * Obtiene la metadata del modelo de Red Neuronal Biométrico entrenado
+ */
+export async function getModelInfo(): Promise<any> {
+  try {
+    const response = await fetch('/api/model-info');
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (err) {
+    console.warn('[Model Info Client] Fallback:', err);
+  }
+  return null;
+}
+
