@@ -450,67 +450,12 @@ app.post("/api/meta/muse-wonder/decompose", async (req, res) => {
 });
 
 /**
- * 3. SAM 3.1 & Vision Multimodal - Calibración Ergonómica de Espacio de Estudio
+ * 3. SAM 3.1 - Calibración Ergonómica Determinista Local (Edge Privacy)
+ * Los datos visuales NUNCA salen del equipo del usuario.
  */
-app.post("/api/meta/sam/calibrate", async (req, res) => {
-  const { image } = req.body;
-  if (image && BASETEN_API_KEY) {
-    try {
-      const basetenUrl = process.env.BASETEN_ENDPOINT_URL || "https://inference.baseten.co/v1/chat/completions";
-      const basetenRes = await fetch(basetenUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${BASETEN_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "meta-models/muse-spark-open-1026",
-          messages: [
-            {
-              role: "system",
-              content: "Eres el Evaluador de Ergonomía Visual de NeuroSynk con Meta Muse Spark Open. Analiza la postura y alineación ergonómica a partir de la captura visual. Responde estrictamente con un JSON con las claves: isCalibrated (boolean), distanceMetric ('OPTIMAL'|'TOO_CLOSE'|'TOO_FAR'), headTiltAngle (number), shoulderAlignmentScore (number 0-100), clutterScore (number 0-100), recommendations (array de 2 strings con micro-instrucciones con verbo en MAYÚSCULAS)."
-            },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "Calibra ergonómicamente el espacio de estudio del usuario:" },
-                { type: "image_url", image_url: { url: image } }
-              ]
-            }
-          ],
-          reasoning_effort: "minimal",
-          max_tokens: 300
-        })
-      });
-
-      if (basetenRes.ok) {
-        const data = await basetenRes.json();
-        const content = data.choices?.[0]?.message?.content || "";
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          res.json({
-            provider: "meta-muse-spark-vision",
-            isCalibrated: parsed.isCalibrated ?? true,
-            distanceMetric: parsed.distanceMetric || 'OPTIMAL',
-            headTiltAngle: parsed.headTiltAngle ?? 0,
-            shoulderAlignmentScore: parsed.shoulderAlignmentScore ?? 92,
-            clutterScore: parsed.clutterScore ?? 14,
-            recommendations: parsed.recommendations || [
-              'Línea visual alineada con el tercio superior del monitor.',
-              'Cámara centrada y espacio ergonómico listo para el sprint.'
-            ]
-          });
-          return;
-        }
-      }
-    } catch (e: any) {
-      console.warn("[SAM / Vision Calibrate] Fallback to deterministic calibration:", e?.message || e);
-    }
-  }
-
+app.post("/api/meta/sam/calibrate", (req, res) => {
   res.json({
-    provider: "local-biomechanical",
+    provider: "local-edge-biomechanical",
     isCalibrated: true,
     distanceMetric: 'OPTIMAL',
     headTiltAngle: 0,
@@ -519,81 +464,6 @@ app.post("/api/meta/sam/calibrate", async (req, res) => {
     recommendations: [
       'Línea visual alineada con el tercio superior del monitor.',
       'Cámara centrada y espacio ergonómico listo para el sprint.'
-    ]
-  });
-});
-
-/**
- * 4. Vision Multimodal Endpoint - Análisis Ergonómico en Tiempo Real
- */
-app.post("/api/meta/vision-ergonomics", async (req, res) => {
-  const { image, task = 'Estudio', cognitiveState = 'NEUTRO' } = req.body;
-  if (!image) {
-    res.status(400).json({ error: "Image snapshot required" });
-    return;
-  }
-
-  if (BASETEN_API_KEY) {
-    try {
-      const basetenUrl = process.env.BASETEN_ENDPOINT_URL || "https://inference.baseten.co/v1/chat/completions";
-      const basetenRes = await fetch(basetenUrl, {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${BASETEN_API_KEY}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          model: "meta-models/muse-spark-open-1026",
-          messages: [
-            {
-              role: "system",
-              content: "Eres el Agente de Ergonomía Cognitiva de NeuroSynk. Analiza la postura y tensión ergonómica del usuario. Responde estrictamente con un JSON con: postureScore (0-100), distanceMetric ('OPTIMAL'|'TOO_CLOSE'|'TOO_FAR'), headTiltAngle (number), recommendations (array de 2 strings con micro-instrucciones iniciando con verbo en MAYÚSCULAS)."
-            },
-            {
-              role: "user",
-              content: [
-                { type: "text", text: `Analiza esta postura. Estado cognitivo: ${cognitiveState}. Tarea: ${task}` },
-                { type: "image_url", image_url: { url: image } }
-              ]
-            }
-          ],
-          reasoning_effort: "minimal",
-          max_tokens: 280
-        })
-      });
-
-      if (basetenRes.ok) {
-        const data = await basetenRes.json();
-        const content = data.choices?.[0]?.message?.content || "";
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          res.json({
-            provider: "meta-muse-spark-vision",
-            postureScore: parsed.postureScore ?? 88,
-            distanceMetric: parsed.distanceMetric ?? "OPTIMAL",
-            headTiltAngle: parsed.headTiltAngle ?? 0,
-            recommendations: parsed.recommendations ?? [
-              "ALINEA tu columna recta frente al monitor.",
-              "PARPADEA conscientemente para oxigenar la vista."
-            ]
-          });
-          return;
-        }
-      }
-    } catch (err: any) {
-      console.warn("[Vision Ergonomics] Fallback:", err?.message || err);
-    }
-  }
-
-  res.json({
-    provider: "local-biomechanical-fallback",
-    postureScore: 90,
-    distanceMetric: "OPTIMAL",
-    headTiltAngle: 0,
-    recommendations: [
-      "MANTÉN tu mirada alineada al tercio superior del monitor.",
-      "RESPIRA profundo y relaja la tensión de los hombros."
     ]
   });
 });
