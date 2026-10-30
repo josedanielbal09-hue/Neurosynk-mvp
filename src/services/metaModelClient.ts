@@ -35,6 +35,28 @@ export interface MetaSAMCalibrationResult {
   recommendations: string[];
 }
 
+export interface BiometricTelemetryPayload {
+  cognitiveState?: string;
+  focusScore?: number;
+  stressLevel?: number;
+  sessionMinutes?: number;
+  postureState?: string;
+}
+
+export interface SessionDebriefPayload {
+  task: string;
+  totalMinutes: number;
+  completedStepsCount: number;
+  totalStepsCount: number;
+  averageFocus: number;
+  flowPercentage: number;
+  fatigueEventsCount: number;
+}
+
+export interface SessionDebriefResult {
+  debrief: string;
+}
+
 export function sanitizeApiKey(raw: string): string {
   if (!raw) return '';
   return raw.replace(/[\u200B-\u200D\uFEFF\u00A0\r\n\t]/g, '').trim();
@@ -65,7 +87,8 @@ export async function chatUniversal(
   messages: any[] | string,
   _apiKey?: string,
   currentStep: string = '',
-  taskContext: string = ''
+  taskContext: string = '',
+  telemetry?: BiometricTelemetryPayload
 ): Promise<{ reply: string; proposal?: any }> {
   const userText = Array.isArray(messages)
     ? (messages[messages.length - 1]?.content || '')
@@ -75,7 +98,13 @@ export async function chatUniversal(
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: userText, messages: Array.isArray(messages) ? messages : undefined, currentStep, taskContext })
+      body: JSON.stringify({
+        message: userText,
+        messages: Array.isArray(messages) ? messages : undefined,
+        currentStep,
+        taskContext,
+        telemetry
+      })
     });
     if (response.ok) {
       const data = await response.json();
@@ -85,6 +114,29 @@ export async function chatUniversal(
     console.warn('[Meta Client Chat] Fallback:', err);
   }
   return { reply: "AVANZA con determinación en este paso. Seguimos contigo." };
+}
+
+export async function sessionDebriefUniversal(
+  payload: SessionDebriefPayload
+): Promise<SessionDebriefResult> {
+  try {
+    const response = await fetch('/api/session-debrief', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (response.ok) {
+      const data = await response.json();
+      if (data.debrief) {
+        return { debrief: data.debrief };
+      }
+    }
+  } catch (err) {
+    console.warn('[Session Debrief Client] Fallback:', err);
+  }
+  return {
+    debrief: `SESIÓN CONCLUIDA: Has completado ${payload.completedStepsCount} de ${payload.totalStepsCount} pasos en "${payload.task}". Tu promedio de enfoque se mantuvo en ${payload.averageFocus}%. Excelente persistencia. Toma 5 minutos para estirarte y descansar la vista antes de tu siguiente bloque.`
+  };
 }
 
 export async function taskSurveyUniversal(

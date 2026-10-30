@@ -105,16 +105,20 @@ async function callMetaModel(params: MetaCallParams): Promise<string> {
           messages,
           reasoning_effort: params.reasoningEffort || "minimal",
           temperature: params.temperature ?? 0.7,
-          max_tokens: params.maxTokens ?? 2048
+          max_tokens: Math.max(params.maxTokens ?? 1024, 450)
         })
       });
 
       if (basetenRes.ok) {
         const data = await basetenRes.json();
-        const text = data.choices?.[0]?.message?.content || "";
-        if (text.trim().length > 0) {
-          return text.trim();
+        const choice = data.choices?.[0];
+        const text = (choice?.message?.content || choice?.message?.reasoning_content || "").trim();
+        if (text.length > 0) {
+          return text;
         }
+      } else {
+        const errBody = await basetenRes.text();
+        console.warn(`[Baseten Fallback] Status ${basetenRes.status}: ${errBody}`);
       }
     } catch (basetenErr: any) {
       console.warn(`[Baseten Fallback] Call failed:`, basetenErr?.message || basetenErr);
@@ -326,7 +330,7 @@ Responde estrictamente con un JSON con la clave "subSteps": array de 3 strings.`
 });
 
 app.post("/api/chat", async (req, res) => {
-  const { message, messages, currentStep, taskContext } = req.body;
+  const { message, messages, currentStep, taskContext, telemetry } = req.body;
   const userText = message || (Array.isArray(messages) && messages.length > 0 
     ? (messages[messages.length - 1].content || messages[messages.length - 1].text || '') 
     : '');
@@ -337,16 +341,33 @@ app.post("/api/chat", async (req, res) => {
   }
 
   try {
-    const prompt_sistema = `Eres el Mentor de Co-presencia de NeuroSynk impulsado por Meta Muse Spark.
+    let prompt_sistema = `Eres el Mentor de Co-presencia de NeuroSynk impulsado por Meta Muse Spark.
 Tu misión es mantener al usuario en acción resolviendo dudas en menos de 28 palabras.
 Inicia SIEMPRE con un VERBO DE ACCIÓN EN MAYÚSCULAS. Cero Markdown. Tono de co-presencia ("estamos / vamos").`;
+
+    // Adaptación del tono y carga cognitiva según telemetría biométrica local anónima
+    if (telemetry && typeof telemetry === 'object') {
+      const state = String(telemetry.cognitiveState || '').toUpperCase();
+      const focus = Number(telemetry.focusScore ?? 100);
+      const stress = Number(telemetry.stressLevel ?? 0);
+
+      if (state.includes('FATIGA') || focus < 35) {
+        prompt_sistema += `\n[ESTADO DETECTADO: FATIGA COGNITIVA (Foco ${focus}%)]. El usuario está cansado. Responde con extrema calma y suavidad, usando baja carga cognitiva. Sugiere una micro-acción de 30 segundos o un respiro si procede.`;
+      } else if (state.includes('AGOBIO') || stress > 70) {
+        prompt_sistema += `\n[ESTADO DETECTADO: SOBRECARGA / AGOBIO (Tensión ${stress}%)]. Sé un ancla somática calmante. Pide dar únicamente un micro-paso atómico a la vez sin abrumar.`;
+      } else if (state.includes('FLOW') || focus > 80) {
+        prompt_sistema += `\n[ESTADO DETECTADO: ESTADO DE FLOW PROFUNDO]. Responde en MENOS DE 12 PALABRAS directas para proteger su concentración sin interrumpir el ritmo.`;
+      } else if (state.includes('DISTRA') || focus < 50) {
+        prompt_sistema += `\n[ESTADO DETECTADO: DISPERSIÓN]. Orienta suavemente la atención de regreso al paso activo.`;
+      }
+    }
 
     const text = await callMetaModel({
       model: "muse-spark-1.0",
       systemPrompt: prompt_sistema,
       userPrompt: `Paso activo: "${currentStep || 'Trabajo'}"\nContexto: "${taskContext || 'General'}"\nMensaje: "${userText}"`,
       reasoningEffort: "minimal",
-      maxTokens: 100
+      maxTokens: 750
     });
 
     const cleanReply = text.replace(/[*_#]/g, '').trim();
@@ -354,6 +375,55 @@ Inicia SIEMPRE con un VERBO DE ACCIÓN EN MAYÚSCULAS. Cero Markdown. Tono de co
   } catch (err: any) {
     console.warn("[Chat] Using adaptive reply:", err?.message || err);
     res.json({ reply: "DIVIDE el paso en su mínima expresión. Escribe la primera palabra para arrancar." });
+  }
+});
+
+/**
+ * Endpoint de Debriefing Cognitivo Post-Sesión
+ * Genera un resumen ejecutivo de acompañamiento y descanso con Meta Muse Spark / Baseten
+ */
+app.post("/api/session-debrief", async (req, res) => {
+  const {
+    task = "Sesión de Enfoque",
+    totalMinutes = 0,
+    completedStepsCount = 0,
+    totalStepsCount = 0,
+    averageFocus = 80,
+    flowPercentage = 0,
+    fatigueEventsCount = 0
+  } = req.body;
+
+  const fallbackSummary = `SESIÓN CONCLUIDA: Has completado ${completedStepsCount} de ${totalStepsCount} pasos en "${task}". Tu promedio de enfoque se mantuvo en ${averageFocus}%. Excelente persistencia. Toma 5 minutos para estirarte y descansar la vista antes de tu siguiente bloque.`;
+
+  try {
+    const prompt_sistema = `Eres el Mentor de Co-presencia y Recuperación Cognitiva de NeuroSynk impulsado por Meta Muse Spark.
+Analiza las estadísticas anónimas de la sesión completada y redacta un reporte de cierre conciso (máximo 60 palabras).
+Estructura en 3 puntos breves:
+1. BALANCE: evaluación del ritmo y enfoque.
+2. LOGRO: reconocimiento por los pasos concluidos.
+3. RECUPERACIÓN: recomendación somática específica para descansar.
+Inicia con una frase energizante en MAYÚSCULAS. Cero formato Markdown agresivo.`;
+
+    const userPrompt = `Tarea: "${task}"
+Duración total: ${totalMinutes} minutos
+Pasos concluidos: ${completedStepsCount} de ${totalStepsCount}
+Promedio de enfoque: ${averageFocus}%
+Tiempo en Flow: ${flowPercentage}%
+Picos de fatiga gestionados: ${fatigueEventsCount}`;
+
+    const text = await callMetaModel({
+      model: "muse-spark-1.0",
+      systemPrompt: prompt_sistema,
+      userPrompt,
+      reasoningEffort: "minimal",
+      maxTokens: 750
+    });
+
+    const clean = text.replace(/[*_#]/g, '').trim();
+    res.json({ debrief: clean || fallbackSummary });
+  } catch (err: any) {
+    console.warn("[Session Debrief] Using fallback:", err?.message || err);
+    res.json({ debrief: fallbackSummary });
   }
 });
 
@@ -386,7 +456,7 @@ app.post("/api/meta/muse-spark/stream", async (req, res) => {
       model: "muse-spark-1.0",
       userPrompt: prompt,
       temperature: 0.5,
-      maxTokens: 45
+      maxTokens: 450
     });
 
     const words = text.split(" ");
