@@ -156,8 +156,8 @@ export async function callGoogleGeminiDirect(
   isJson: boolean = false
 ): Promise<string> {
   const cleanKey = sanitizeApiKey(apiKey);
-  if (!cleanKey) {
-    throw new Error('Gemini API Key is not configured.');
+  if (!cleanKey || cleanKey === getDefaultGoogleApiKey()) {
+    throw new Error('Using server-side Cloud AI endpoint.');
   }
 
   const modelsToTry = await getAvailableModels(cleanKey);
@@ -834,43 +834,40 @@ export async function probeTaskContext(
   const howMethod = currentContext.howMethod || null;
   const mainBlocker = currentContext.mainBlocker || null;
 
-  const cleanedMessage = String(message || '')
-    .replace(/^\[VOICE_BRAIN_DUMP\]\s*/i, '')
-    .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, '')
-    .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, '')
-    .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que)\s+/i, '')
-    .trim();
+  let cleanedMessage = String(message || '').replace(/^\[VOICE_BRAIN_DUMP\]\s*/i, '').trim();
+  for (let i = 0; i < 3; i++) {
+    cleanedMessage = cleanedMessage
+      .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, '')
+      .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, '')
+      .replace(/^(hoy|ahora(\s+mismo)?|ahorita|este\s+d[ií]a|pues|bueno|mira|oye)[,.\s]+/i, '')
+      .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que|debo|hay\s+que)\s+/i, '')
+      .trim();
+  }
+  const lowerMsg = cleanedMessage.toLowerCase();
+  const isGreetingOnly = /^(hola|buenas|hey|hi|hello|que tal|qué tal|buenos dias|buenos días|buenas tardes|ok|vale)$/i.test(lowerMsg);
+  const isNoneBlocker = /^(ninguno|ninguna|nada|no|todo bien|none|nothing|sin bloqueo)$/i.test(lowerMsg);
+  const isDontKnow = /^(no\s*s[eé]|nose|idk|no\s+lo\s+s[eé]|cualquiera|recomi[eé]ndame|ay[uú]dame|ayuda|no\s+tengo\s+idea)$/i.test(lowerMsg);
+
   let nextWhat = whatGoal;
   let nextHow = howMethod;
   let nextBlocker = mainBlocker;
 
-  if (!nextWhat && cleanedMessage) {
-    nextWhat = cleanedMessage.slice(0, 140);
-  } else if (!nextHow && cleanedMessage) {
-    nextHow = cleanedMessage.slice(0, 140);
+  if (!nextWhat && cleanedMessage && !isGreetingOnly && !isDontKnow) {
+    nextWhat = (cleanedMessage.charAt(0).toUpperCase() + cleanedMessage.slice(1)).slice(0, 140);
+  } else if (!nextHow && cleanedMessage && !isGreetingOnly) {
+    nextHow = isDontKnow
+      ? (lang === 'es' ? 'Práctica guiada con ejercicios paso a paso' : 'Guided step-by-step practice exercises')
+      : cleanedMessage.slice(0, 140);
   } else if (!nextBlocker && cleanedMessage) {
-    nextBlocker = cleanedMessage.slice(0, 140);
+    nextBlocker = (isNoneBlocker || isDontKnow)
+      ? (lang === 'es' ? 'Estructurar el orden paso a paso sin distracciones' : 'Structuring step-by-step order without distractions')
+      : cleanedMessage.slice(0, 140);
   }
 
   const buildDeterministicFallback = (): ContextProbeResult => {
-    const lowerMsg = cleanedMessage.toLowerCase();
-    const isGreetingOnly = /^(hola|buenas|hey|hi|hello|que tal|qué tal|buenos dias|buenos días|buenas tardes|ok|vale)$/i.test(lowerMsg);
-    const isNoneBlocker = /^(ninguno|ninguna|nada|no|todo bien|none|nothing|sin bloqueo)$/i.test(lowerMsg);
-
-    // Only accept meaningful input for each slot
-    let resolvedWhat = whatGoal;
-    let resolvedHow = howMethod;
-    let resolvedBlocker = mainBlocker;
-
-    if (!resolvedWhat && cleanedMessage && !isGreetingOnly) {
-      resolvedWhat = cleanedMessage.slice(0, 140);
-    } else if (resolvedWhat && !resolvedHow && cleanedMessage && !isGreetingOnly) {
-      resolvedHow = cleanedMessage.slice(0, 140);
-    } else if (resolvedWhat && resolvedHow && !resolvedBlocker && cleanedMessage) {
-      resolvedBlocker = isNoneBlocker
-        ? (lang === 'es' ? 'Sin bloqueo crítico (Optimizar velocidad)' : 'No critical blocker (Optimize speed)')
-        : cleanedMessage.slice(0, 140);
-    }
+    const resolvedWhat = nextWhat;
+    const resolvedHow = nextHow;
+    const resolvedBlocker = nextBlocker;
 
     const filledCount = [resolvedWhat, resolvedHow, resolvedBlocker].filter(Boolean).length;
     const completenessScore = filledCount === 3 ? 100 : filledCount === 2 ? 68 : filledCount === 1 ? 34 : 0;
@@ -893,8 +890,12 @@ export async function probeTaskContext(
       replyEs = `Meta: "${resolvedWhat}". ¿Cómo lo abordarás (ejercicios, lectura, código, apuntes)?`;
       replyEn = `Goal: "${resolvedWhat}". How will you tackle it (exercises, reading, code, notes)?`;
     } else if (nextTargetField === 'mainBlocker') {
-      replyEs = `Usando "${resolvedHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
-      replyEn = `Using "${resolvedHow}". Which part is hardest or blocking you right now?`;
+      replyEs = isDontKnow
+        ? `Te sugiero: "${resolvedHow}". ¿Qué parte de "${resolvedWhat}" se te dificulta más ahora?`
+        : `Usando "${resolvedHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
+      replyEn = isDontKnow
+        ? `I suggest: "${resolvedHow}". Which part of "${resolvedWhat}" is hardest for you right now?`
+        : `Using "${resolvedHow}". Which part is hardest or blocking you right now?`;
     } else {
       replyEs = `¡Listo! Meta: "${resolvedWhat}". Elige abajo: 50 Ideas Brian Tracy, Diagrama o Micro-pasos.`;
       replyEn = `Ready! Goal: "${resolvedWhat}". Choose below: 50 Brian Tracy Ideas, Diagram, or Micro-steps.`;
@@ -932,10 +933,10 @@ export async function probeTaskContext(
     };
   };
 
-  // 1. Try Backend /api/context-probe with 10s AbortSignal timeout
+  // 1. Try Backend /api/context-probe with 25s AbortSignal timeout
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
 
     const response = await fetch('/api/context-probe', {
       method: 'POST',

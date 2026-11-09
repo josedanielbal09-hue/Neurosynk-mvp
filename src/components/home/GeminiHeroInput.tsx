@@ -61,11 +61,15 @@ interface GeminiHeroInputProps {
 }
 
 function cleanGoalInput(raw: string): string {
-  const cleaned = String(raw || '')
-    .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, '')
-    .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, '')
-    .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que)\s+/i, '')
-    .trim();
+  let cleaned = String(raw || '').trim();
+  for (let i = 0; i < 3; i++) {
+    cleaned = cleaned
+      .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, '')
+      .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, '')
+      .replace(/^(hoy|ahora(\s+mismo)?|ahorita|este\s+d[ií]a|pues|bueno|mira|oye)[,.\s]+/i, '')
+      .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que|debo|hay\s+que)\s+/i, '')
+      .trim();
+  }
   if (!cleaned) return String(raw || '').trim();
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }

@@ -72,11 +72,15 @@ const DEFAULT_CLOUD_AI_KEY = Buffer.from(
 const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || DEFAULT_GEMINI_KEY).trim();
 
 function cleanConversationalGoal(raw: string): string {
-  const cleaned = String(raw || "")
-    .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, "")
-    .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, "")
-    .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que)\s+/i, "")
-    .trim();
+  let cleaned = String(raw || "").trim();
+  for (let i = 0; i < 3; i++) {
+    cleaned = cleaned
+      .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, "")
+      .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, "")
+      .replace(/^(hoy|ahora(\s+mismo)?|ahorita|este\s+d[ií]a|pues|bueno|mira|oye)[,.\s]+/i, "")
+      .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que|debo|hay\s+que)\s+/i, "")
+      .trim();
+  }
   if (!cleaned) return String(raw || "").trim();
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
@@ -128,84 +132,82 @@ async function fetchWithRetry(url: string, options: any, retries = 2, timeoutMs 
 async function callMetaModel(params: GeminiCallParams): Promise<string> {
   const endpointTag = params.endpointName || "/api/gemini/inference";
   const activeKey = (params.apiKeyOverride || GEMINI_API_KEY || "").trim().replace(/^["']|["']$/g, "");
-
-  if (!activeKey) {
-    throw new Error("GEMINI_API_KEY not configured");
-  }
-
-  const modelsToTry = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+  const hasCustomGeminiKey = Boolean(activeKey && activeKey !== DEFAULT_GEMINI_KEY);
   let lastErr: any = null;
 
-  for (const geminiModel of modelsToTry) {
-    try {
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${encodeURIComponent(activeKey)}`;
-      const startTime = performance.now();
+  if (hasCustomGeminiKey) {
+    const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
-      broadcastAiLog(
-        `\n${ANSI.bgMagenta}${ANSI.bold} ⚡ [server.ts -> Google Gemini API (${geminiModel})] ${ANSI.reset} ${ANSI.magenta}${ANSI.bold}${endpointTag}${ANSI.reset}\n` +
-        `${ANSI.dim}├─${ANSI.reset} Model: ${ANSI.bold}${ANSI.emerald}${geminiModel}${ANSI.reset} | Max Output Tokens: ${params.maxTokens ?? 2048}\n` +
-        `${ANSI.dim}└─${ANSI.reset} Input Context: ${ANSI.white}${params.userPrompt.replace(/\s+/g, ' ').slice(0, 140)}...${ANSI.reset}`
-      );
-
-      const payload: any = {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: params.userPrompt }]
-          }
-        ],
-        generationConfig: {
-          temperature: params.temperature ?? 0.7,
-          maxOutputTokens: params.maxTokens ?? 2048
-        }
-      };
-
-      if (params.systemPrompt) {
-        payload.systemInstruction = {
-          parts: [{ text: params.systemPrompt }]
-        };
-      }
-
-      const geminiRes = await fetchWithRetry(geminiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      const latencyMs = Math.round(performance.now() - startTime);
-
-      if (geminiRes.ok) {
-        const data = await geminiRes.json();
-        const rawText = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
-        const usage = data.usageMetadata || {};
-        const promptTok = usage.promptTokenCount ?? 0;
-        const completionTok = usage.candidatesTokenCount ?? 0;
-        const thoughtsTok = usage.thoughtsTokenCount ?? 0;
-
-        const text = rawText.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
-        const outputPreview = text.replace(/\s+/g, ' ').slice(0, 220);
+    for (const geminiModel of modelsToTry) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${geminiModel}:generateContent?key=${encodeURIComponent(activeKey)}`;
+        const startTime = performance.now();
 
         broadcastAiLog(
-          `${ANSI.bgEmerald}${ANSI.bold} ✓ GOOGLE GEMINI 200 OK ${ANSI.reset} ${ANSI.emerald}${ANSI.bold}${endpointTag}${ANSI.reset} ${ANSI.dim}(${latencyMs} ms)${ANSI.reset}\n` +
-          `${ANSI.dim}├─${ANSI.reset} ${ANSI.cyan}📊 Token Telemetry:${ANSI.reset} prompt=${promptTok} | thoughts=${thoughtsTok} | completion=${completionTok}\n` +
-          `${ANSI.dim}└─${ANSI.reset} ${ANSI.emerald}📦 Emitted Payload:${ANSI.reset} ${ANSI.white}${outputPreview}${text.length > 220 ? '...' : ''}${ANSI.reset}`
+          `\n${ANSI.bgMagenta}${ANSI.bold} ⚡ [server.ts -> Google Gemini API (${geminiModel})] ${ANSI.reset} ${ANSI.magenta}${ANSI.bold}${endpointTag}${ANSI.reset}\n` +
+          `${ANSI.dim}├─${ANSI.reset} Model: ${ANSI.bold}${ANSI.emerald}${geminiModel}${ANSI.reset} | Max Output Tokens: ${params.maxTokens ?? 2048}\n` +
+          `${ANSI.dim}└─${ANSI.reset} Input Context: ${ANSI.white}${params.userPrompt.replace(/\s+/g, ' ').slice(0, 140)}...${ANSI.reset}`
         );
 
-        if (text.length > 0) {
-          return text;
+        const payload: any = {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: params.userPrompt }]
+            }
+          ],
+          generationConfig: {
+            temperature: params.temperature ?? 0.7,
+            maxOutputTokens: params.maxTokens ?? 2048
+          }
+        };
+
+        if (params.systemPrompt) {
+          payload.systemInstruction = {
+            parts: [{ text: params.systemPrompt }]
+          };
         }
-      } else {
-        const errBody = await geminiRes.text();
-        lastErr = new Error(`Status ${geminiRes.status}: ${errBody}`);
-        console.warn(`[Google Gemini ${geminiModel}] Status ${geminiRes.status}`);
-        // If the key itself is rejected (403/400/401), break immediately to Cloud AI Failover instead of wasting time on 3 models
-        if (geminiRes.status === 403 || geminiRes.status === 401 || geminiRes.status === 400) {
-          break;
+
+        const geminiRes = await fetchWithRetry(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const latencyMs = Math.round(performance.now() - startTime);
+
+        if (geminiRes.ok) {
+          const data = await geminiRes.json();
+          const rawText = (data.candidates?.[0]?.content?.parts?.[0]?.text || "").trim();
+          const usage = data.usageMetadata || {};
+          const promptTok = usage.promptTokenCount ?? 0;
+          const completionTok = usage.candidatesTokenCount ?? 0;
+          const thoughtsTok = usage.thoughtsTokenCount ?? 0;
+
+          const text = rawText.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+          const outputPreview = text.replace(/\s+/g, ' ').slice(0, 220);
+
+          broadcastAiLog(
+            `${ANSI.bgEmerald}${ANSI.bold} ✓ GOOGLE GEMINI 200 OK ${ANSI.reset} ${ANSI.emerald}${ANSI.bold}${endpointTag}${ANSI.reset} ${ANSI.dim}(${latencyMs} ms)${ANSI.reset}\n` +
+            `${ANSI.dim}├─${ANSI.reset} ${ANSI.cyan}📊 Token Telemetry:${ANSI.reset} prompt=${promptTok} | thoughts=${thoughtsTok} | completion=${completionTok}\n` +
+            `${ANSI.dim}└─${ANSI.reset} ${ANSI.emerald}📦 Emitted Payload:${ANSI.reset} ${ANSI.white}${outputPreview}${text.length > 220 ? '...' : ''}${ANSI.reset}`
+          );
+
+          if (text.length > 0) {
+            return text;
+          }
+        } else {
+          const errBody = await geminiRes.text();
+          lastErr = new Error(`Status ${geminiRes.status}: ${errBody}`);
+          console.warn(`[Google Gemini ${geminiModel}] Status ${geminiRes.status}`);
+          if (geminiRes.status === 403 || geminiRes.status === 401 || geminiRes.status === 400) {
+            break;
+          }
         }
+      } catch (err: any) {
+        lastErr = err;
+        console.warn(`[Google Gemini ${geminiModel}] Call failed:`, err?.message || err);
       }
-    } catch (err: any) {
-      lastErr = err;
-      console.warn(`[Google Gemini ${geminiModel}] Call failed:`, err?.message || err);
     }
   }
 
@@ -340,18 +342,21 @@ app.post("/api/context-probe", async (req, res) => {
   const lowerMsg = cleanedMessage.toLowerCase();
   const isGreetingOnly = /^(hola|buenas|hey|hi|hello|que tal|qué tal|buenos dias|buenos días|buenas tardes|ok|vale)$/i.test(lowerMsg);
   const isNoneBlocker = /^(ninguno|ninguna|nada|no|todo bien|none|nothing|sin bloqueo)$/i.test(lowerMsg);
+  const isDontKnow = /^(no\s*s[eé]|nose|idk|no\s+lo\s+s[eé]|cualquiera|recomi[eé]ndame|ay[uú]dame|ayuda|no\s+tengo\s+idea)$/i.test(lowerMsg);
 
   let nextWhat = whatGoal;
   let nextHow = howMethod;
   let nextBlocker = mainBlocker;
 
-  if (!nextWhat && cleanedMessage && !isGreetingOnly) {
+  if (!nextWhat && cleanedMessage && !isGreetingOnly && !isDontKnow) {
     nextWhat = cleanConversationalGoal(cleanedMessage).slice(0, 140);
   } else if (nextWhat && !nextHow && cleanedMessage && !isGreetingOnly) {
-    nextHow = cleanedMessage.slice(0, 140);
+    nextHow = isDontKnow
+      ? (lang === "es" ? "Práctica guiada con ejercicios paso a paso" : "Guided step-by-step practice exercises")
+      : cleanedMessage.slice(0, 140);
   } else if (nextWhat && nextHow && !nextBlocker && cleanedMessage) {
-    nextBlocker = isNoneBlocker
-      ? (lang === "es" ? "Sin bloqueo crítico (Optimizar velocidad)" : "No critical blocker (Optimize speed)")
+    nextBlocker = (isNoneBlocker || isDontKnow)
+      ? (lang === "es" ? "Estructurar el orden paso a paso sin distracciones" : "Structuring step-by-step order without distractions")
       : cleanedMessage.slice(0, 140);
   }
 
@@ -376,8 +381,12 @@ app.post("/api/context-probe", async (req, res) => {
     fallbackReplyEs = `Meta: "${nextWhat}". ¿Cómo lo abordarás (ejercicios, lectura, código, apuntes)?`;
     fallbackReplyEn = `Goal: "${nextWhat}". How will you tackle it (exercises, reading, code, notes)?`;
   } else if (fallbackTarget === "mainBlocker") {
-    fallbackReplyEs = `Usando "${nextHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
-    fallbackReplyEn = `Using "${nextHow}". Which part is hardest or blocking you right now?`;
+    fallbackReplyEs = isDontKnow
+      ? `Te sugiero: "${nextHow}". ¿Qué parte de "${nextWhat}" se te dificulta más ahora?`
+      : `Usando "${nextHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
+    fallbackReplyEn = isDontKnow
+      ? `I suggest: "${nextHow}". Which part of "${nextWhat}" is hardest for you right now?`
+      : `Using "${nextHow}". Which part is hardest or blocking you right now?`;
   } else {
     fallbackReplyEs = `¡Listo! Meta: "${nextWhat}". Elige abajo: 50 Ideas Brian Tracy, Diagrama o Micro-pasos.`;
     fallbackReplyEn = `Ready! Goal: "${nextWhat}". Choose below: 50 Brian Tracy Ideas, Diagram, or Micro-steps.`;
@@ -403,16 +412,17 @@ app.post("/api/context-probe", async (req, res) => {
 
   try {
     const langName = lang === "es" ? "Spanish (Español)" : "English";
-    const sys = `You are NeuroSynk's Surgical Productivity Architect.
+    const sys = `Be brief and fast. Do NOT overthink. You are NeuroSynk's Surgical Productivity Architect.
 Your ONLY job before task splitting is to extract 3 strategic pillars from the user:
-1. whatGoal (WHAT exact deliverable they want to achieve)
+1. whatGoal (WHAT exact deliverable they want to achieve — strip conversational greetings like "hola chat hoy tengo que" so only the clean goal remains)
 2. howMethod (HOW / with what tools or approach they will do it)
 3. mainBlocker (WHAT is their #1 current friction, doubt, or obstacle)
 
 STRICT RULES:
-- "reply" MUST be ULTRA-SHORT: MAXIMUM 18 WORDS in ${langName}. Direct, zero fluff, asking ONLY for the next missing pillar (or confirming readiness if all 3 are known).
-- If the user message starts with [VOICE_BRAIN_DUMP], distill their emotional/mental stream into whatGoal, howMethod, and mainBlocker automatically.
-- Provide 3 short "suggestedKeyboardChips" (3-6 words each in ${langName}) so the user can answer the next question with 1 click or keyboard.
+- In Spanish, "nose" or "no se" means "no sé" (I don't know). If the user says "nose" / "no sé" / "ayuda" for howMethod, automatically recommend and set howMethod to a concrete study method tailored to whatGoal, and in "reply" suggest that method and ask for mainBlocker.
+- If the user says "nose" / "ninguno" / "nada" for mainBlocker, set mainBlocker to a concrete focus point and mark isComplete: true.
+- "reply" MUST be ULTRA-SHORT: MAXIMUM 18 WORDS in ${langName}. Direct, natural, zero fluff.
+- Provide 3 short "suggestedKeyboardChips" (3-6 words each in ${langName}) tailored to the goal.
 - Respond ONLY with valid JSON matching:
 {
   "reply": "string (max 18 words in ${langName})",
@@ -430,8 +440,8 @@ STRICT RULES:
       model: "gemini-3.5-flash",
       systemPrompt: sys,
       userPrompt: `Language: ${langName}\nCurrent Extracted Context: ${JSON.stringify({ whatGoal, howMethod, mainBlocker })}\nNew User Input: "${message}"`,
-      temperature: 0.4,
-      maxTokens: 700,
+      temperature: 0.35,
+      maxTokens: 4096,
       apiKeyOverride: headerKey
     });
 
@@ -439,7 +449,7 @@ STRICT RULES:
     if (jsonMatch) {
       const data = JSON.parse(jsonMatch[0]);
       const ext = data.extracted || {};
-      const finalWhat = ext.whatGoal || nextWhat || null;
+      const finalWhat = (ext.whatGoal ? cleanConversationalGoal(ext.whatGoal) : nextWhat) || null;
       const finalHow = ext.howMethod || nextHow || null;
       const finalBlocker = ext.mainBlocker || nextBlocker || null;
       const count = [finalWhat, finalHow, finalBlocker].filter(Boolean).length;

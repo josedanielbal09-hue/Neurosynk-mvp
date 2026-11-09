@@ -23,11 +23,15 @@ const DEFAULT_GEMINI_KEY = atob("QUl6YVN5QmxqQm1sdVV2Znl3Y29xbDBJb1o3MnhkZnNzX2h
 const DEFAULT_CLOUD_AI_KEY = atob("YjEwX2M3ZnUxMmYzLkRwb3Q4NTRhcnNwQ0laY3BrN2NKRVpySEJXN0RTQ2kz");
 
 function cleanConversationalGoal(raw: string): string {
-  const cleaned = String(raw || "")
-    .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, "")
-    .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, "")
-    .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que)\s+/i, "")
-    .trim();
+  let cleaned = String(raw || "").trim();
+  for (let i = 0; i < 3; i++) {
+    cleaned = cleaned
+      .replace(/^(hola(\s+chat|\s+bot|\s+focusbud)?[,.\s]*)/i, "")
+      .replace(/^(buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|hey|hi|hello)[,.\s]*/i, "")
+      .replace(/^(hoy|ahora(\s+mismo)?|ahorita|este\s+d[ií]a|pues|bueno|mira|oye)[,.\s]+/i, "")
+      .replace(/^(quiero|necesito|quisiera|me\s+gustar[ií]a|voy\s+a|tengo\s+que|debo|hay\s+que)\s+/i, "")
+      .trim();
+  }
   if (!cleaned) return String(raw || "").trim();
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
@@ -71,51 +75,51 @@ async function callAIModel(
   maxTokens: number = 2048
 ): Promise<string> {
   const activeKey = getEffectiveGeminiKey(env, request);
-  if (!activeKey) {
-    throw new Error("GEMINI_API_KEY not configured");
-  }
+  const hasCustomGeminiKey = Boolean(activeKey && activeKey !== DEFAULT_GEMINI_KEY);
 
-  const modelsToTry = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+  if (hasCustomGeminiKey) {
+    const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash"];
 
-  for (const model of modelsToTry) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(activeKey)}`;
-      const payload: any = {
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }]
+    for (const model of modelsToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(activeKey)}`;
+        const payload: any = {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: prompt }]
+            }
+          ],
+          generationConfig: {
+            temperature,
+            maxOutputTokens: maxTokens
           }
-        ],
-        generationConfig: {
-          temperature,
-          maxOutputTokens: maxTokens
-        }
-      };
-
-      if (systemPrompt) {
-        payload.systemInstruction = {
-          parts: [{ text: systemPrompt }]
         };
-      }
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+        if (systemPrompt) {
+          payload.systemInstruction = {
+            parts: [{ text: systemPrompt }]
+          };
+        }
 
-      if (res.ok) {
-        const data: any = await res.json();
-        const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-        const clean = content.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
-        if (clean.length > 0) return clean;
-      } else {
-        console.warn(`[Worker AI] Google Gemini (${model}) status:`, res.status);
-        if (res.status === 403 || res.status === 401 || res.status === 400) break;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (res.ok) {
+          const data: any = await res.json();
+          const content = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+          const clean = content.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+          if (clean.length > 0) return clean;
+        } else {
+          console.warn(`[Worker AI] Google Gemini (${model}) status:`, res.status);
+          if (res.status === 403 || res.status === 401 || res.status === 400) break;
+        }
+      } catch (e) {
+        console.warn(`[Worker AI] Google Gemini (${model}) error:`, e);
       }
-    } catch (e) {
-      console.warn(`[Worker AI] Google Gemini (${model}) error:`, e);
     }
   }
 
@@ -135,7 +139,7 @@ async function callAIModel(
           model: "meta-models/muse-spark-open-1026",
           messages,
           temperature,
-          max_tokens: Math.max(maxTokens, 2048)
+          max_tokens: Math.max(maxTokens, 4096)
         })
       });
       if (cloudRes.ok) {
@@ -195,18 +199,21 @@ export default {
         const lowerMsg = cleanedMessage.toLowerCase();
         const isGreetingOnly = /^(hola|buenas|hey|hi|hello|que tal|qué tal|buenos dias|buenos días|buenas tardes|ok|vale)$/i.test(lowerMsg);
         const isNoneBlocker = /^(ninguno|ninguna|nada|no|todo bien|none|nothing|sin bloqueo)$/i.test(lowerMsg);
+        const isDontKnow = /^(no\s*s[eé]|nose|idk|no\s+lo\s+s[eé]|cualquiera|recomi[eé]ndame|ay[uú]dame|ayuda|no\s+tengo\s+idea)$/i.test(lowerMsg);
 
         let nextWhat = whatGoal;
         let nextHow = howMethod;
         let nextBlocker = mainBlocker;
 
-        if (!nextWhat && cleanedMessage && !isGreetingOnly) {
+        if (!nextWhat && cleanedMessage && !isGreetingOnly && !isDontKnow) {
           nextWhat = cleanConversationalGoal(cleanedMessage).slice(0, 140);
         } else if (nextWhat && !nextHow && cleanedMessage && !isGreetingOnly) {
-          nextHow = cleanedMessage.slice(0, 140);
+          nextHow = isDontKnow
+            ? (lang === "es" ? "Práctica guiada con ejercicios paso a paso" : "Guided step-by-step practice exercises")
+            : cleanedMessage.slice(0, 140);
         } else if (nextWhat && nextHow && !nextBlocker && cleanedMessage) {
-          nextBlocker = isNoneBlocker
-            ? (lang === "es" ? "Sin bloqueo crítico (Optimizar velocidad)" : "No critical blocker (Optimize speed)")
+          nextBlocker = (isNoneBlocker || isDontKnow)
+            ? (lang === "es" ? "Estructurar el orden paso a paso sin distracciones" : "Structuring step-by-step order without distractions")
             : cleanedMessage.slice(0, 140);
         }
 
@@ -231,8 +238,12 @@ export default {
           fallbackReplyEs = `Meta: "${nextWhat}". ¿Cómo lo abordarás (ejercicios, lectura, código, apuntes)?`;
           fallbackReplyEn = `Goal: "${nextWhat}". How will you tackle it (exercises, reading, code, notes)?`;
         } else if (fallbackTarget === "mainBlocker") {
-          fallbackReplyEs = `Usando "${nextHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
-          fallbackReplyEn = `Using "${nextHow}". Which part is hardest or blocking you right now?`;
+          fallbackReplyEs = isDontKnow
+            ? `Te sugiero: "${nextHow}". ¿Qué parte de "${nextWhat}" se te dificulta más ahora?`
+            : `Usando "${nextHow}". ¿Qué parte te cuesta más o qué te frena ahora mismo?`;
+          fallbackReplyEn = isDontKnow
+            ? `I suggest: "${nextHow}". Which part of "${nextWhat}" is hardest for you right now?`
+            : `Using "${nextHow}". Which part is hardest or blocking you right now?`;
         } else {
           fallbackReplyEs = `¡Listo! Meta: "${nextWhat}". Elige abajo: 50 Ideas Brian Tracy, Diagrama o Micro-pasos.`;
           fallbackReplyEn = `Ready! Goal: "${nextWhat}". Choose below: 50 Brian Tracy Ideas, Diagram, or Micro-steps.`;
@@ -258,16 +269,17 @@ export default {
 
         try {
           const langName = lang === "es" ? "Spanish (Español)" : "English";
-          const sys = `You are NeuroSynk's Surgical Productivity Architect.
+          const sys = `Be brief and fast. Do NOT overthink. You are NeuroSynk's Surgical Productivity Architect.
 Your ONLY job before task splitting is to extract 3 strategic pillars from the user:
-1. whatGoal (WHAT exact deliverable they want to achieve)
+1. whatGoal (WHAT exact deliverable they want to achieve — strip conversational greetings like "hola chat hoy tengo que" so only the clean goal remains)
 2. howMethod (HOW / with what tools or approach they will do it)
 3. mainBlocker (WHAT is their #1 current friction, doubt, or obstacle)
 
 STRICT RULES:
-- "reply" MUST be ULTRA-SHORT: MAXIMUM 18 WORDS in ${langName}. Direct, zero fluff, asking ONLY for the next missing pillar (or confirming readiness if all 3 are known).
-- If the user message starts with [VOICE_BRAIN_DUMP], distill their emotional/mental stream into whatGoal, howMethod, and mainBlocker automatically.
-- Provide 3 short "suggestedKeyboardChips" (3-6 words each in ${langName}) so the user can answer the next question with 1 click or keyboard.
+- In Spanish, "nose" or "no se" means "no sé" (I don't know). If the user says "nose" / "no sé" / "ayuda" for howMethod, automatically recommend and set howMethod to a concrete study method tailored to whatGoal, and in "reply" suggest that method and ask for mainBlocker.
+- If the user says "nose" / "ninguno" / "nada" for mainBlocker, set mainBlocker to a concrete focus point and mark isComplete: true.
+- "reply" MUST be ULTRA-SHORT: MAXIMUM 18 WORDS in ${langName}. Direct, natural, zero fluff.
+- Provide 3 short "suggestedKeyboardChips" (3-6 words each in ${langName}) tailored to the goal.
 - Respond ONLY with valid JSON matching:
 {
   "reply": "string (max 18 words in ${langName})",
@@ -284,12 +296,12 @@ STRICT RULES:
 Current Extracted Context: ${JSON.stringify({ whatGoal, howMethod, mainBlocker })}
 New User Input: "${message}"`;
 
-          const text = await callAIModel(prompt, sys, env, request, 0.4, 700);
+          const text = await callAIModel(prompt, sys, env, request, 0.35, 4096);
           const data = extractJsonFromText(text);
 
           if (data && typeof data === "object") {
             const ext = data.extracted || {};
-            const finalWhat = ext.whatGoal || nextWhat || null;
+            const finalWhat = (ext.whatGoal ? cleanConversationalGoal(ext.whatGoal) : nextWhat) || null;
             const finalHow = ext.howMethod || nextHow || null;
             const finalBlocker = ext.mainBlocker || nextBlocker || null;
             const count = [finalWhat, finalHow, finalBlocker].filter(Boolean).length;
