@@ -435,11 +435,23 @@ STRICT RULES:
   "suggestedKeyboardChips": ["chip1", "chip2", "chip3"]
 }`;
 
+    const effectiveMessage = isDontKnow
+      ? (!whatGoal && !nextWhat
+          ? (lang === "es" ? "No sé por dónde empezar hoy, recomiéndame una meta de estudio." : "I don't know where to start today, suggest a study goal.")
+          : (!howMethod
+              ? (lang === "es"
+                  ? `No sé qué método usar para "${whatGoal || nextWhat}". Recomiéndame tú el mejor método práctico, asígnalo en howMethod y pregúntame cuál es mi bloqueo principal.`
+                  : `I don't know what method to use for "${whatGoal || nextWhat}". Recommend the best practical method, set it in howMethod, and ask for my main blocker.`)
+              : (lang === "es"
+                  ? `No sé cuál es mi bloqueo en "${whatGoal || nextWhat}". Asigna un enfoque clave en mainBlocker y confirma que estamos listos.`
+                  : `I don't know my main blocker for "${whatGoal || nextWhat}". Set a key focus target in mainBlocker and confirm readiness.`)))
+      : message;
+
     const text = await callMetaModel({
       endpointName: "/api/context-probe [SURGICAL-CONTEXT]",
       model: "gemini-3.5-flash",
       systemPrompt: sys,
-      userPrompt: `Language: ${langName}\nCurrent Extracted Context: ${JSON.stringify({ whatGoal, howMethod, mainBlocker })}\nNew User Input: "${message}"`,
+      userPrompt: `Language: ${langName}\nCurrent Extracted Context: ${JSON.stringify({ whatGoal: whatGoal || nextWhat, howMethod, mainBlocker })}\nNew User Input: "${effectiveMessage}"`,
       temperature: 0.35,
       maxTokens: 4096,
       apiKeyOverride: headerKey
